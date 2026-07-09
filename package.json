@@ -1,0 +1,20 @@
+{
+  "name": "vibe-one",
+  "version": "0.1.0",
+  "description": "Bounded AI delivery pipeline: brief -> spec -> runnable app -> verification -> repair -> delivery report",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "vibe-one": "src/cli/index.js"
+  },
+  "scripts": {
+    "start": "node src/cli/index.js",
+    "demo:expense": "node src/cli/index.js run examples/expense-mobile",
+    "test": "node --test \"test/*.test.js\""
+  },
+  "devDependencies": {
+    "playwright": "^1.49.0"
+  }
+}

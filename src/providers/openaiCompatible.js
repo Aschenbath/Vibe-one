@@ -1,0 +1,59 @@
+// Single OpenAI-compatible chat provider. Deliberately the only provider in MVP.
+// Uses global fetch (Node >= 20). Tracks usage metadata for the delivery report.
+
+export function createProvider(config) {
+  async function chat({ system, user, jsonMode = false }) {
+    const body = {
+      model: config.model,
+      temperature: config.temperature,
+      messages: [
+        ...(system ? [{ role: 'system', content: system }] : []),
+        { role: 'user', content: user },
+      ],
+      ...(jsonMode ? { response_format: { type: 'json_object' } } : {}),
+    };
+
+    const res = await fetch(`${config.baseUrl.replace(/\/$/, '')}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${config.apiKey}`,
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`model call failed: HTTP ${res.status} ${text.slice(0, 500)}`);
+    }
+
+    const data = await res.json();
+    const content = data.choices?.[0]?.message?.content;
+    if (typeof content !== 'string') {
+      throw new Error('model call returned no message content');
+    }
+    return { content, usage: data.usage ?? null, model: data.model ?? config.model };
+  }
+
+  // JSON-expecting variant with one bounded retry on parse failure.
+  async function chatJson(opts) {
+    let lastErr;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const { content, usage, model } = await chat({ ...opts, jsonMode: true });
+      try {
+        return { json: extractJson(content), usage, model };
+      } catch (err) {
+        lastErr = err;
+      }
+    }
+    throw new Error(`model returned unparseable JSON twice: ${lastErr.message}`);
+  }
+
+  return { chat, chatJson };
+}
+
+// Tolerates markdown fences around the JSON payload.
+export function extractJson(text) {
+  const trimmed = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
+  return JSON.parse(trimmed);
+}
