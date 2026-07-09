@@ -7,18 +7,32 @@ import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
 const NPM = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+// Node >= 20.12 refuses to spawn .cmd shims with shell:false (CVE-2024-27980 fix),
+// so npm invocations on Windows must go through the shell. All our args are
+// pipeline-controlled literals, never model output, so this is safe.
+const NEEDS_SHELL = process.platform === 'win32';
 
 export async function runCommand(ctx, name, cmd, args, opts = {}) {
   const started = Date.now();
   await ctx.logEvent('cmd:start', { summary: `${cmd} ${args.join(' ')}`, name });
 
   const result = await new Promise((resolve) => {
-    const child = spawn(cmd, args, {
-      cwd: opts.cwd ?? ctx.appDir,
-      shell: false,
-      env: { ...process.env, CI: '1' },
-      windowsHide: true,
-    });
+    // Node >= 20.12 refuses .cmd shims with shell:false (CVE-2024-27980 fix). In
+    // shell mode we pass one pipeline-controlled literal string (never model output).
+    const useShell = cmd === NPM && NEEDS_SHELL;
+    const child = useShell
+      ? spawn(`${cmd} ${args.join(' ')}`, {
+          cwd: opts.cwd ?? ctx.appDir,
+          shell: true,
+          env: { ...process.env, CI: '1' },
+          windowsHide: true,
+        })
+      : spawn(cmd, args, {
+          cwd: opts.cwd ?? ctx.appDir,
+          shell: false,
+          env: { ...process.env, CI: '1' },
+          windowsHide: true,
+        });
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (d) => (stdout += d));
@@ -90,11 +104,10 @@ export function getFreePort() {
 export async function startPreview(ctx, { timeoutMs = 30_000 } = {}) {
   const port = await getFreePort();
   await ctx.logEvent('preview:start', { summary: `starting preview on :${port}` });
-  const child = spawn(NPM, ['run', 'preview', '--', '--port', String(port), '--strictPort'], {
-    cwd: ctx.appDir,
-    shell: false,
-    windowsHide: true,
-  });
+  const previewArgs = ['run', 'preview', '--', '--port', String(port), '--strictPort'];
+  const child = NEEDS_SHELL
+    ? spawn(`${NPM} ${previewArgs.join(' ')}`, { cwd: ctx.appDir, shell: true, windowsHide: true })
+    : spawn(NPM, previewArgs, { cwd: ctx.appDir, shell: false, windowsHide: true });
   let output = '';
   child.stdout.on('data', (d) => (output += d));
   child.stderr.on('data', (d) => (output += d));

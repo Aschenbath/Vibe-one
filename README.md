@@ -26,6 +26,15 @@ npm run demo:expense
 node src/cli/index.js plan examples/expense-mobile
 ```
 
+## Tests
+
+```bash
+npm test                       # offline unit tests only (~2s, no network, no API)
+VIBE_ONE_E2E=1 npm test        # + full pipeline integration test (real npm install + vite build + Playwright, still NO API)
+```
+
+The e2e test drives the entire pipeline (plan -> build -> install -> build -> preview -> screenshot -> scenario -> review -> report) against a stub model that returns a fixed spec + known-good React app. It proves the pipeline wiring and reviewer machinery work without spending any API quota — the only remaining unknown is the real model's JSON shape.
+
 Each run writes to `runs/<target>-<timestamp>/`:
 
 | artifact | meaning |

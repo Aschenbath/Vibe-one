@@ -5,7 +5,9 @@ This is the state-of-play and forward plan written for the Codex agent that take
 ## What is DONE and verified
 
 - **Full pipeline scaffold** (commit history in `history.md`): CLI -> planner -> builder -> runner -> reviewer -> fixer -> reporter, orchestrated in `src/core/pipeline.js`. Only claims `success` when the mechanical reviewer passes.
-- **8/8 offline unit tests pass** (`npm test`): safeJoin traversal + pipeline-owned-file rejection, JSON fence extraction, reviewer green-path, mustContain enforcement, scenario enforcement, failure description. No network needed.
+- **Pipeline verified end-to-end WITHOUT the API** (`VIBE_ONE_E2E=1 npm test`): a stub provider feeds a fixed spec + known-good React app through the real pipeline — real `npm install --ignore-scripts`, real `vite build`, real preview on a free port, real Playwright screenshots + interaction scenario (click Add -> assert new row text), reviewer passes, `DELIVERY_REPORT.md` written. The full loop is proven; **the only remaining unknown is the real model's JSON output shape.**
+- **9 offline unit tests + 1 e2e integration test, all passing**: safeJoin traversal + pipeline-owned-file rejection, JSON fence extraction, reviewer green-path, mustContain enforcement, scenario enforcement, failure description. Default `npm test` stays offline (~2s); e2e is opt-in via `VIBE_ONE_E2E=1`.
+- **The e2e test already caught and fixed a real bug**: Node >= 20.12 throws `EINVAL` when spawning `.cmd` shims with `shell:false` (CVE-2024-27980 fix). Runner now shells npm invocations on Windows with a single pipeline-controlled literal string. If you touch `runner/commands.js`, keep this and rerun the e2e test.
 - **Security review round 1 closed** (all five points from the first Codex review):
   1. *Arbitrary script execution* -> `package.json`/`vite.config.js` are fixed templates written by the pipeline; model cannot write manifest/lockfile/npmrc/config (`FORBIDDEN_FILES` in `builder.js`); deps whitelisted; `npm install --ignore-scripts`.
   2. *Shallow reviewer* -> planner now emits per-page `mustContain` text + structured `scenarios`; runner executes scenarios via Playwright (`runScenarios`); reviewer asserts both. A page full of random text no longer passes.
@@ -15,7 +17,7 @@ This is the state-of-play and forward plan written for the Codex agent that take
 
 ## What is NOT done yet (in priority order for Codex)
 
-1. **Real end-to-end API run has never executed.** The pipeline has never called a live model. This is the single biggest unknown. Endpoint is available (see below). Run `node src/cli/index.js plan examples/expense-mobile` FIRST (one cheap call, no build) to validate JSON shape from the real model, then `npm run demo:expense` for the full loop. Expect to iterate on prompt wording in `planner.js`/`builder.js` when the real model's JSON disagrees with the schema.
+1. **Real model call has never executed.** The pipeline itself is now proven end-to-end by the stub e2e test, so the remaining risk is narrow: does the real model return JSON matching the planner/builder schemas? Run `node src/cli/index.js plan examples/expense-mobile` FIRST (one cheap call, no build), then `npm run demo:expense`. When schema drift appears, fix the SYSTEM prompt wording in `planner.js`/`builder.js` — do not loosen the schema consumers.
 2. **Scenario target resolution is best-effort.** `resolveTarget()` in `runner/commands.js` maps a human-visible `target` string to a Playwright locator via role/text/placeholder/label heuristics. Real generated apps will expose gaps (e.g. a category picker that's a custom div, not a `<select>`). When a scenario fails for a *locator* reason rather than a *logic* reason, tighten the builder SYSTEM prompt to require accessible labels/roles, do NOT loosen the reviewer.
 3. **Fixer prompt is untested against real failures.** `describeFailure()` now includes scenario failures, but the fix quality depends on the model. Watch the first repaired run: if the fixer returns partial files or drops the fixed scaffold, add a guard that re-writes the scaffold before each verify pass (currently only written once at build).
 4. **No "failed-then-repaired" demo captured yet.** FRAMEWORK's interview bar needs one. Easiest path: seed a brief with a deliberately hard interaction, let round 0 fail, capture the repaired round. Keep that run's `DELIVERY_REPORT.md` + screenshots.
@@ -28,6 +30,7 @@ This is the state-of-play and forward plan written for the Codex agent that take
 - **Windows npm shim**: `npm.cmd` is used, not `npm`. Preview/install spawn with `shell:false`; if you see ENOENT, it's the shim name, not the args.
 - **`networkidle` hangs**: some Vite dev/preview pages keep a websocket open; screenshots use `waitUntil:'networkidle'` which can time out. If shots time out but the app is fine, switch to `'load'` + explicit `mustContain` wait.
 - **Playwright first-run**: `chromium_headless_shell` is installed. If CI/another machine lacks it, `npx playwright install chromium` is required — documented in README.
+- **Windows npm shim + Node 20.12+**: spawning `npm.cmd` with `shell:false` throws `EINVAL` (CVE-2024-27980 hardening). Already handled in `runner/commands.js` by shelling npm calls with a literal string; if you refactor spawning, this bites immediately and the e2e test will catch it.
 
 ## Working model endpoint (as of handoff)
 

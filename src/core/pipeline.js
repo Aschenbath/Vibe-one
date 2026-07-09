@@ -9,9 +9,9 @@ import { fix, describeFailure } from './fixer.js';
 import { npmInstall, npmBuild, startPreview, screenshotPages, runScenarios } from '../runner/commands.js';
 import { writeReport } from '../reporter/deliveryReport.js';
 
-export async function runPipeline({ targetDir, config, planOnly = false }) {
+export async function runPipeline({ targetDir, config, planOnly = false, provider: injectedProvider }) {
   const ctx = await createRunContext(targetDir, config);
-  const provider = createProvider(config);
+  const provider = injectedProvider ?? createProvider(config);
 
   let spec = null;
   let status = 'failed';
