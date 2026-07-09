@@ -13,14 +13,23 @@ export function createProvider(config) {
       ...(jsonMode ? { response_format: { type: 'json_object' } } : {}),
     };
 
-    const res = await fetch(`${config.baseUrl.replace(/\/$/, '')}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        authorization: `Bearer ${config.apiKey}`,
-      },
-      body: JSON.stringify(body),
-    });
+    let res;
+    // Bounded backoff for 429 rate limits (some gateways cap RPM aggressively).
+    for (let attempt = 0; ; attempt++) {
+      res = await fetch(`${config.baseUrl.replace(/\/$/, '')}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${config.apiKey}`,
+        },
+        body: JSON.stringify(body),
+      });
+      if (res.status !== 429 || attempt >= 4) break;
+      const retryAfter = Number(res.headers.get('retry-after')) || 25;
+      const waitMs = Math.min(retryAfter, 120) * 1000;
+      console.log(`[provider] 429 rate limited, retrying in ${waitMs / 1000}s (attempt ${attempt + 1}/4)`);
+      await new Promise((r) => setTimeout(r, waitMs));
+    }
 
     if (!res.ok) {
       const text = await res.text().catch(() => '');
