@@ -14,8 +14,11 @@ export function createProvider(config) {
     };
 
     let res;
+    const maxRetries = config.maxNetworkRetries ?? 6;
+    const reqTimeout = config.requestTimeoutMs ?? 120_000;
     // Bounded backoff for both transient network failures (fetch failed / reset /
-    // EOF - common on shared gateways) and 429 rate limits.
+    // EOF - common on shared gateways) and 429 rate limits. Each attempt is
+    // itself timeout-bounded so a hung socket doesn't stall the whole run.
     for (let attempt = 0; ; attempt++) {
       try {
         res = await fetch(`${config.baseUrl.replace(/\/$/, '')}/chat/completions`, {
@@ -25,19 +28,20 @@ export function createProvider(config) {
             authorization: `Bearer ${config.apiKey}`,
           },
           body: JSON.stringify(body),
+          signal: AbortSignal.timeout(reqTimeout),
         });
       } catch (err) {
-        // Network-layer failure (no HTTP response). Retry with backoff.
-        if (attempt >= 4) throw new Error(`model call failed (network): ${err.message}`);
+        // Network-layer failure or per-request timeout (no HTTP response). Retry.
+        if (attempt >= maxRetries) throw new Error(`model call failed (network) after ${maxRetries + 1} attempts: ${err.message}`);
         const waitMs = Math.min(2 ** attempt * 2, 30) * 1000;
-        console.log(`[provider] network error "${err.message}", retrying in ${waitMs / 1000}s (attempt ${attempt + 1}/4)`);
+        console.log(`[provider] network error "${err.message}", retrying in ${waitMs / 1000}s (attempt ${attempt + 1}/${maxRetries})`);
         await new Promise((r) => setTimeout(r, waitMs));
         continue;
       }
-      if (res.status !== 429 || attempt >= 4) break;
+      if (res.status !== 429 || attempt >= maxRetries) break;
       const retryAfter = Number(res.headers.get('retry-after')) || 25;
       const waitMs = Math.min(retryAfter, 120) * 1000;
-      console.log(`[provider] 429 rate limited, retrying in ${waitMs / 1000}s (attempt ${attempt + 1}/4)`);
+      console.log(`[provider] 429 rate limited, retrying in ${waitMs / 1000}s (attempt ${attempt + 1}/${maxRetries})`);
       await new Promise((r) => setTimeout(r, waitMs));
     }
 

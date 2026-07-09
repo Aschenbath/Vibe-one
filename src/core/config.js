@@ -11,6 +11,10 @@ const DEFAULTS = {
   baseUrl: process.env.VIBE_ONE_BASE_URL || 'https://api.openai.com/v1',
   temperature: 0.2,
   commandTimeoutMs: 5 * 60 * 1000,
+  // Network resilience for flaky/shared gateways. maxNetworkRetries applies to
+  // both transient fetch failures and 429s; requestTimeoutMs bounds each attempt.
+  maxNetworkRetries: Number(process.env.VIBE_ONE_MAX_RETRIES) || 6,
+  requestTimeoutMs: Number(process.env.VIBE_ONE_REQUEST_TIMEOUT_MS) || 120_000,
 };
 
 export async function loadConfig(targetDir) {
