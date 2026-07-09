@@ -31,7 +31,7 @@ export async function fix(ctx, provider, { failure, round }) {
 }
 
 // Renders failure evidence for the model from runner/reviewer results.
-export function describeFailure({ install, build, shots, reviewResult, previewError }) {
+export function describeFailure({ install, build, shots, scenarioResults, reviewResult, previewError }) {
   const parts = [];
   if (previewError) parts.push(`PREVIEW FAILED:\n${previewError}`);
   if (install && install.exitCode !== 0) {
@@ -44,6 +44,15 @@ export function describeFailure({ install, build, shots, reviewResult, previewEr
     parts.push(
       'REVIEW CHECKS FAILED:\n' +
         reviewResult.failed.map((c) => `- ${c.name}: ${c.detail}`).join('\n'),
+    );
+  }
+  if (scenarioResults?.some((r) => !r.pass)) {
+    parts.push(
+      'INTERACTION SCENARIOS FAILED:\n' +
+        scenarioResults
+          .filter((r) => !r.pass)
+          .map((r) => `- ${r.name}: ${r.error ?? 'failed'}`)
+          .join('\n'),
     );
   }
   if (shots?.length) {

@@ -48,11 +48,13 @@ src/reporter/   DELIVERY_REPORT.md generation
 
 ## Design rules
 
-- The reviewer is purely mechanical (exit codes, screenshot bytes, page text) so results are reproducible without trusting a model.
+- The reviewer is purely mechanical (exit codes, screenshot bytes, page text, per-page `mustContain` fragments, and end-to-end interaction scenarios) so results are reproducible without trusting a model.
 - The fixer loop is bounded by `maxRepairRounds` (default 2) and records every diagnosis + patched file.
-- Model-written files are jailed to `runs/<id>/app/` (`safeJoin` rejects traversal).
+- Model output cannot execute code: `package.json`/`vite.config.js` are fixed templates, deps are whitelisted, and `npm install --ignore-scripts` blocks lifecycle hooks. Model-written files are jailed to `runs/<id>/app/`.
 - Success is only claimed when every reviewer check passes.
 
 ## Status
 
-Phase 1 scaffold (text-brief MVP). Screenshot input and visual similarity scoring are Phase 3 - see `FRAMEWORK.md`.
+Phase 1 scaffold (text-brief MVP), review round 1 closed. Screenshot input and visual similarity scoring are Phase 3 - see `FRAMEWORK.md`.
+
+**No live model run has executed the pipeline end-to-end yet** — that is the next step. If you are picking this up (Codex or otherwise), read `docs/HANDOFF.md` first: it has the working endpoint, predicted failure modes, and the fast path to interview-ready.

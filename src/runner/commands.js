@@ -1,6 +1,8 @@
-// Runner: executes verification commands with full capture, plus preview + screenshots.
-import { spawn } from 'node:child_process';
+// Runner: executes verification commands with full capture, plus preview + screenshots
+// + planner-defined interaction scenarios.
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs/promises';
+import net from 'node:net';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -23,7 +25,7 @@ export async function runCommand(ctx, name, cmd, args, opts = {}) {
     child.stderr.on('data', (d) => (stderr += d));
 
     const timer = setTimeout(() => {
-      child.kill('SIGKILL');
+      killTree(child);
       resolve({ exitCode: null, stdout, stderr: stderr + '\n[vibe-one] timed out', timedOut: true });
     }, opts.timeoutMs ?? 5 * 60 * 1000);
 
@@ -54,15 +56,39 @@ export async function runCommand(ctx, name, cmd, args, opts = {}) {
 }
 
 export async function npmInstall(ctx) {
-  return runCommand(ctx, 'npm-install', NPM, ['install', '--no-audit', '--no-fund']);
+  // --ignore-scripts: model-influenced trees must never run lifecycle scripts.
+  return runCommand(ctx, 'npm-install', NPM, ['install', '--ignore-scripts', '--no-audit', '--no-fund']);
 }
 
 export async function npmBuild(ctx) {
   return runCommand(ctx, 'npm-build', NPM, ['run', 'build']);
 }
 
-// Starts `vite preview`, waits for the local URL, returns { url, stop() }.
-export async function startPreview(ctx, { port = 4173, timeoutMs = 30_000 } = {}) {
+// Kills the whole process tree (npm shim -> node -> vite) on Windows and POSIX.
+function killTree(child) {
+  if (child.exitCode !== null || child.killed) return;
+  if (process.platform === 'win32') {
+    spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true });
+  } else {
+    child.kill('SIGKILL');
+  }
+}
+
+// Finds an OS-assigned free port so parallel/dirty runs never collide.
+export function getFreePort() {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.once('error', reject);
+    srv.listen(0, '127.0.0.1', () => {
+      const { port } = srv.address();
+      srv.close(() => resolve(port));
+    });
+  });
+}
+
+// Starts `vite preview` on a free port, waits for readiness, returns { url, stop() }.
+export async function startPreview(ctx, { timeoutMs = 30_000 } = {}) {
+  const port = await getFreePort();
   await ctx.logEvent('preview:start', { summary: `starting preview on :${port}` });
   const child = spawn(NPM, ['run', 'preview', '--', '--port', String(port), '--strictPort'], {
     cwd: ctx.appDir,
@@ -73,21 +99,21 @@ export async function startPreview(ctx, { port = 4173, timeoutMs = 30_000 } = {}
   child.stdout.on('data', (d) => (output += d));
   child.stderr.on('data', (d) => (output += d));
 
-  const url = `http://localhost:${port}/`;
+  const url = `http://127.0.0.1:${port}/`;
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
       const res = await fetch(url);
       if (res.ok) {
         await ctx.logEvent('preview:ready', { summary: url });
-        return { url, output: () => output, stop: () => child.kill('SIGKILL') };
+        return { url, output: () => output, stop: () => killTree(child) };
       }
     } catch {
       // not up yet
     }
     await delay(500);
   }
-  child.kill('SIGKILL');
+  killTree(child);
   throw new Error(`preview server did not become ready on ${url}\n${output.slice(-2000)}`);
 }
 
@@ -115,6 +141,63 @@ export async function screenshotPages(ctx, baseUrl, pages, viewport) {
   return shots;
 }
 
+// Executes planner-defined interaction scenarios:
+// { name, route, steps: [{ action: 'click'|'fill', target, value? }], expectText }
+// `target` is user-visible text (button/link label) or an input placeholder/label.
+export async function runScenarios(ctx, baseUrl, scenarios, viewport) {
+  if (!scenarios?.length) return [];
+  const { chromium } = await import('playwright');
+  const browser = await chromium.launch();
+  const results = [];
+  try {
+    for (const sc of scenarios) {
+      const page = await browser.newPage({ viewport });
+      const result = { name: sc.name, pass: false, error: null };
+      try {
+        const route = sc.route?.startsWith('/') ? sc.route : `/${sc.route ?? ''}`;
+        await page.goto(new URL(route, baseUrl).href, { waitUntil: 'networkidle', timeout: 30_000 });
+        for (const step of sc.steps ?? []) {
+          const locator = await resolveTarget(page, step);
+          if (step.action === 'fill') await locator.fill(String(step.value ?? ''), { timeout: 5_000 });
+          else await locator.click({ timeout: 5_000 });
+          await page.waitForTimeout(300);
+        }
+        if (sc.expectText) {
+          const body = await page.evaluate(() => document.body.innerText);
+          if (!body.includes(sc.expectText)) {
+            throw new Error(`expected text not found after steps: "${sc.expectText}"`);
+          }
+        }
+        result.pass = true;
+        const file = path.join(ctx.screenshotsDir, `scenario-${slug(sc.name)}.png`);
+        await page.screenshot({ path: file, fullPage: true });
+      } catch (err) {
+        result.error = err.message.split('\n')[0];
+      } finally {
+        await page.close();
+      }
+      results.push(result);
+      await ctx.logEvent('scenario', { summary: `${sc.name}: ${result.pass ? 'pass' : `FAIL (${result.error})`}` });
+    }
+  } finally {
+    await browser.close();
+  }
+  return results;
+}
+
+async function resolveTarget(page, step) {
+  if (step.action === 'fill') {
+    const byPlaceholder = page.getByPlaceholder(step.target);
+    if (await byPlaceholder.count()) return byPlaceholder.first();
+    const byLabel = page.getByLabel(step.target);
+    if (await byLabel.count()) return byLabel.first();
+    return page.locator(`input, textarea, select`).filter({ hasText: step.target }).first();
+  }
+  const byRole = page.getByRole('button', { name: step.target });
+  if (await byRole.count()) return byRole.first();
+  return page.getByText(step.target, { exact: false }).first();
+}
+
 function slug(name) {
-  return String(name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'page';
+  return String(name).toLowerCase().replace(/[^a-z0-9一-鿿]+/g, '-').replace(/^-|-$/g, '') || 'page';
 }

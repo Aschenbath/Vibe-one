@@ -1,11 +1,21 @@
-// Run context: creates runs/<run-id>/ layout and a structured event log.
+// Run context: creates <runsRoot>/<run-id>/ layout and a structured event log.
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-export async function createRunContext(targetDir) {
+// Vibe-one project root (src/core/runContext.js -> ../../)
+export const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+export function resolveRunsRoot(config = {}) {
+  return path.resolve(
+    config.runsRoot || process.env.VIBE_ONE_RUNS_DIR || path.join(PROJECT_ROOT, 'runs'),
+  );
+}
+
+export async function createRunContext(targetDir, config = {}) {
   const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
   const runId = `${path.basename(targetDir)}-${stamp}`;
-  const runDir = path.join(targetDir, '..', '..', 'runs', runId);
+  const runDir = path.join(resolveRunsRoot(config), runId);
 
   const dirs = {
     runDir,

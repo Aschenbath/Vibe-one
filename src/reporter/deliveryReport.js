@@ -2,7 +2,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-export async function writeReport(ctx, { config, spec, status, rounds, finalReview, shots, error }) {
+export async function writeReport(ctx, { config, spec, status, rounds, finalReview, shots, scenarioResults, error }) {
   const cmdEvents = ctx.events.filter((e) => e.type === 'cmd:done');
   const fixEvents = ctx.events.filter((e) => e.type === 'fix:applied');
 
@@ -29,6 +29,11 @@ export async function writeReport(ctx, { config, spec, status, rounds, finalRevi
     ...(finalReview
       ? finalReview.checks.map((c) => `- [${c.pass ? 'x' : ' '}] ${c.name} (${c.detail})`)
       : ['(verification did not complete)']),
+    '',
+    '## Interaction scenarios', '',
+    ...((scenarioResults ?? []).length
+      ? scenarioResults.map((r) => `- [${r.pass ? 'x' : ' '}] ${r.name}${r.error ? ` - ${r.error}` : ''}`)
+      : ['(none defined)']),
     '',
     '## Screenshots', '',
     ...((shots ?? []).map((s) => `- ${s.page}: \`screenshots/${path.basename(s.file)}\` (${s.bytes} bytes)`)),

@@ -6,11 +6,11 @@ import { plan } from './planner.js';
 import { build } from './builder.js';
 import { review } from './reviewer.js';
 import { fix, describeFailure } from './fixer.js';
-import { npmInstall, npmBuild, startPreview, screenshotPages } from '../runner/commands.js';
+import { npmInstall, npmBuild, startPreview, screenshotPages, runScenarios } from '../runner/commands.js';
 import { writeReport } from '../reporter/deliveryReport.js';
 
 export async function runPipeline({ targetDir, config, planOnly = false }) {
-  const ctx = await createRunContext(targetDir);
+  const ctx = await createRunContext(targetDir, config);
   const provider = createProvider(config);
 
   let spec = null;
@@ -18,6 +18,7 @@ export async function runPipeline({ targetDir, config, planOnly = false }) {
   let rounds = 0;
   let finalReview = null;
   let shots = [];
+  let scenarioResults = [];
   let fatal = null;
 
   try {
@@ -34,6 +35,7 @@ export async function runPipeline({ targetDir, config, planOnly = false }) {
       const verdict = await verifyOnce(ctx, config, spec);
       finalReview = verdict.reviewResult;
       shots = verdict.shots;
+      scenarioResults = verdict.scenarioResults ?? [];
 
       if (verdict.reviewResult?.pass) {
         status = 'success';
@@ -54,7 +56,7 @@ export async function runPipeline({ targetDir, config, planOnly = false }) {
   return finish();
 
   async function finish() {
-    await writeReport(ctx, { config, spec, status, rounds, finalReview, shots, error: fatal });
+    await writeReport(ctx, { config, spec, status, rounds, finalReview, shots, scenarioResults, error: fatal });
     return { runId: ctx.runId, runDir: ctx.runDir, status };
   }
 }
@@ -78,19 +80,21 @@ async function verifyOnce(ctx, config, spec) {
   }
 
   let shots = [];
+  let scenarioResults = [];
   try {
     shots = await screenshotPages(ctx, preview.url, spec.pages ?? [], config.viewport);
+    scenarioResults = await runScenarios(ctx, preview.url, spec.scenarios ?? [], config.viewport);
   } catch (err) {
-    return { install, build: buildResult, shots, reviewResult: failEarly(`screenshot failed: ${err.message}`) };
+    return { install, build: buildResult, shots, scenarioResults, reviewResult: failEarly(`screenshot/scenario failed: ${err.message}`) };
   } finally {
     preview.stop();
   }
 
-  const reviewResult = review({ install, build: buildResult, shots, spec });
+  const reviewResult = review({ install, build: buildResult, shots, spec, scenarioResults });
   await ctx.logEvent('review', {
     summary: reviewResult.pass ? 'all checks pass' : `${reviewResult.failed.length} checks failing`,
   });
-  return { install, build: buildResult, shots, reviewResult };
+  return { install, build: buildResult, shots, scenarioResults, reviewResult };
 }
 
 function failEarly(reason) {
