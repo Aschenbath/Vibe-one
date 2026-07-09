@@ -1,5 +1,7 @@
 # Vibe-one
 
+[![ci](https://github.com/Aschenbath/Vibe-one/actions/workflows/ci.yml/badge.svg)](https://github.com/Aschenbath/Vibe-one/actions/workflows/ci.yml)
+
 Bounded AI delivery pipeline: takes a product brief, generates a spec and a runnable React app, verifies it with real local commands and Playwright screenshots, repairs failures within a bounded loop, and emits an auditable delivery report.
 
 ```text

@@ -84,18 +84,17 @@ const SPEC = {
   ],
 };
 
-// Stub provider: first chatJson call -> spec, second -> files. Deterministic, no network.
+// Stub provider: plan() uses chatJson (spec is small structured JSON); build()
+// uses chat and expects the delimiter file protocol. Deterministic, no network.
 function createStubProvider() {
-  let call = 0;
   const usage = { prompt_tokens: 10, completion_tokens: 20 };
+  const fileBlocks = APP_FILES.map((f) => `=== FILE: ${f.path}\n${f.content}=== END ===`).join('\n');
   return {
     async chat() {
-      throw new Error('stub chat() should not be called by the pipeline');
+      return { content: fileBlocks, usage, model: 'stub' };
     },
     async chatJson() {
-      call += 1;
-      if (call === 1) return { json: SPEC, usage, model: 'stub' };
-      return { json: { files: APP_FILES }, usage, model: 'stub' };
+      return { json: SPEC, usage, model: 'stub' };
     },
   };
 }

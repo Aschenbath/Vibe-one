@@ -1,11 +1,22 @@
 // Fixer: bounded repair loop. Sends compact failure evidence back to the model
 // and applies returned file patches. Never exceeds config.maxRepairRounds.
-import { applyPatch } from './builder.js';
+// Uses the same delimiter file protocol as the builder (see builder.js) so large
+// patched files never break on JSON escaping.
+import { applyPatch, parseFileBlocks } from './builder.js';
 
+const DIAG_MARK = '=== DIAGNOSIS ===';
 const SYSTEM = `You are the fixer of a bounded app-replication pipeline.
 You get failing command output and failing review checks for a React+Vite app.
-Output STRICT JSON: { "diagnosis": string, "files": [{ "path": "relative/path", "content": "FULL new file content" }] }
-Rules: return complete file contents (no diffs), touch as few files as possible, do not add dependencies unless the error proves one is missing.`;
+
+OUTPUT FORMAT (no JSON, no markdown fences):
+${DIAG_MARK}
+<one short paragraph: what was wrong and how you fixed it>
+=== FILE: relative/path
+<FULL corrected file content>
+=== END ===
+(repeat FILE/END for each file you change)
+
+Rules: return COMPLETE file contents (no diffs), touch as few files as possible, do not add dependencies unless the error proves one is missing.`;
 
 export async function fix(ctx, provider, { failure, round }) {
   await ctx.logEvent('fix:start', { summary: `repair round ${round}` });
@@ -17,17 +28,25 @@ export async function fix(ctx, provider, { failure, round }) {
     'Return corrected files.',
   ].join('\n');
 
-  const { json, usage } = await provider.chatJson({ system: SYSTEM, user });
+  const { content, usage } = await provider.chat({ system: SYSTEM, user });
   ctx.addUsage(usage);
 
-  const files = json.files ?? [];
+  const diagnosis = extractDiagnosis(content);
+  const files = parseFileBlocks(content);
   await applyPatch(ctx, files);
   await ctx.logEvent('fix:applied', {
     summary: `round ${round}: ${files.length} files patched`,
-    diagnosis: json.diagnosis,
+    diagnosis,
     files: files.map((f) => f.path),
   });
-  return { diagnosis: json.diagnosis, files: files.map((f) => f.path) };
+  return { diagnosis, files: files.map((f) => f.path) };
+}
+
+// Pulls the diagnosis paragraph that precedes the first FILE block.
+function extractDiagnosis(text) {
+  const afterMark = text.split(DIAG_MARK)[1] ?? text;
+  const beforeFirstFile = afterMark.split('=== FILE:')[0] ?? '';
+  return beforeFirstFile.replace(/```/g, '').trim().slice(0, 500) || '(none)';
 }
 
 // Renders failure evidence for the model from runner/reviewer results.

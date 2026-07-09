@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { safeJoin } from '../src/core/builder.js';
+import { parseFileBlocks } from '../src/core/builder.js';
 import { extractJson } from '../src/providers/openaiCompatible.js';
 import { review } from '../src/core/reviewer.js';
 import { describeFailure } from '../src/core/fixer.js';
@@ -33,6 +34,39 @@ test('extractJson tolerates markdown fences', () => {
   assert.deepEqual(extractJson('```json\n{"a":1}\n```'), { a: 1 });
   assert.deepEqual(extractJson('{"a":1}'), { a: 1 });
   assert.throws(() => extractJson('not json'));
+});
+
+test('parseFileBlocks handles the delimiter protocol with tricky content', () => {
+  // Content deliberately contains quotes, backslashes, braces, and a JSON blob -
+  // exactly what breaks a JSON-string transport but is fine for delimited raw text.
+  const out = `=== FILE: index.html
+<div id="root"></div>
+=== END ===
+=== FILE: src/App.jsx
+const s = "he said \\"hi\\"";
+const re = /\\d+/;
+const obj = { a: 1, b: "}" };
+=== END ===`;
+  const files = parseFileBlocks(out);
+  assert.equal(files.length, 2);
+  assert.equal(files[0].path, 'index.html');
+  assert.match(files[0].content, /<div id="root">/);
+  assert.equal(files[1].path, 'src/App.jsx');
+  assert.match(files[1].content, /he said/);
+  assert.match(files[1].content, /\{ a: 1, b: "\}" \}/);
+});
+
+test('parseFileBlocks strips an outer markdown fence', () => {
+  const out = '```\n=== FILE: a.js\nconsole.log(1);\n=== END ===\n```';
+  const files = parseFileBlocks(out);
+  assert.equal(files.length, 1);
+  assert.equal(files[0].path, 'a.js');
+  assert.match(files[0].content, /console\.log\(1\)/);
+});
+
+test('parseFileBlocks ignores empty or markerless output', () => {
+  assert.equal(parseFileBlocks('just some prose, no markers').length, 0);
+  assert.equal(parseFileBlocks('=== FILE: empty.js\n\n=== END ===').length, 0);
 });
 
 const okShot = { page: 'Home', route: '/', bytes: 60_000, text: 'x'.repeat(100), file: 'home.png' };
