@@ -1,12 +1,14 @@
 // Offline unit tests: no network, no model. Pins the safety-critical helpers.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { safeJoin } from '../src/core/builder.js';
 import { parseFileBlocks } from '../src/core/builder.js';
 import { extractJson } from '../src/providers/openaiCompatible.js';
 import { review } from '../src/core/reviewer.js';
-import { describeFailure } from '../src/core/fixer.js';
+import { describeFailure, gatherSource } from '../src/core/fixer.js';
 
 const APP = path.resolve('/tmp/run/app');
 
@@ -130,4 +132,21 @@ test('describeFailure includes build stderr and failed checks', () => {
   assert.match(text, /BUILD FAILED/);
   assert.match(text, /SyntaxError/);
   assert.match(text, /REVIEW CHECKS FAILED/);
+});
+
+test('gatherSource collects app source and skips scaffold + node_modules', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-src-'));
+  await fs.mkdir(path.join(dir, 'src'), { recursive: true });
+  await fs.mkdir(path.join(dir, 'node_modules', 'react'), { recursive: true });
+  await fs.writeFile(path.join(dir, 'package.json'), '{"scaffold":true}');
+  await fs.writeFile(path.join(dir, 'src', 'App.jsx'), 'export default function App(){}');
+  await fs.writeFile(path.join(dir, 'node_modules', 'react', 'index.js'), 'module.exports={}');
+
+  const out = await gatherSource(dir);
+  assert.match(out, /=== FILE: src\/App\.jsx/);
+  assert.match(out, /export default function App/);
+  assert.doesNotMatch(out, /scaffold/); // package.json excluded
+  assert.doesNotMatch(out, /node_modules/); // deps excluded
+
+  await fs.rm(dir, { recursive: true, force: true });
 });
