@@ -174,5 +174,8 @@ function inferStatus(events) {
 }
 
 function titleFromId(id) {
-  return id.replace(/-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}$/, '').replace(/[-_]+/g, ' ');
+  return id
+    .replace(/-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}$/, '')
+    .replace(/-[a-f0-9]{8}$/i, '')
+    .replace(/[-_]+/g, ' ');
 }

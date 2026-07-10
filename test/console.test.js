@@ -23,10 +23,12 @@ test('session status exposes key presence but never the key', () => {
 test('a job streams stages and rejects concurrent starts', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-job-'));
   let release;
+  let pipelineTargetDir;
   const gate = new Promise((resolve) => {
     release = resolve;
   });
-  const pipeline = async ({ config }) => {
+  const pipeline = async ({ config, targetDir }) => {
+    pipelineTargetDir = targetDir;
     config.onEvent({ ts: new Date().toISOString(), type: 'plan:start', summary: 'planning' });
     await gate;
     config.onEvent({ ts: new Date().toISOString(), type: 'report:written', summary: 'report' });
@@ -48,6 +50,7 @@ test('a job streams stages and rejects concurrent starts', async () => {
   assert.equal(finished.stage, 'success');
   assert.equal(finished.events[0].type, 'plan:start');
   assert.equal(JSON.stringify(finished).includes('secret'), false);
+  assert.match(path.basename(pipelineTargetDir), /^demo-[a-f0-9]{8}$/);
 
   await fs.rm(root, { recursive: true, force: true });
 });
@@ -151,6 +154,22 @@ test('HTTP API returns structured validation errors', async () => {
 
   await app.close();
   await fs.rm(root, { recursive: true, force: true });
+});
+
+test('HTTP responses include local-console browser security headers', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-http-headers-'));
+  const app = createConsoleServer({ runsRoot: path.join(root, 'runs'), env: {} });
+  const address = await app.listen(0);
+
+  try {
+    const response = await fetch(`${address.url}api/status`);
+    assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
+    assert.match(response.headers.get('content-security-policy'), /default-src 'self'/);
+    assert.match(response.headers.get('content-security-policy'), /frame-src http:\/\/127\.0\.0\.1:\*/);
+  } finally {
+    await app.close();
+    await fs.rm(root, { recursive: true, force: true });
+  }
 });
 
 test('console page exposes the complete operational workflow', async () => {

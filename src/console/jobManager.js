@@ -47,7 +47,7 @@ export function createJobManager({ runsRoot, pipeline = runPipeline, load = load
 
     const id = randomUUID();
     const title = String(input.title ?? 'Untitled app').trim().slice(0, 80) || 'Untitled app';
-    const targetDir = path.join(runsRoot, '.console-inputs', id);
+    const targetDir = path.join(runsRoot, '.console-inputs', `${slugTitle(title)}-${id.slice(0, 8)}`);
     const baseUrl = String(input.baseUrl || session.baseUrl || env.VIBE_ONE_BASE_URL || 'https://api.openai.com/v1');
     const model = String(input.model || session.model || env.VIBE_ONE_MODEL || 'gpt-4o-mini');
 
@@ -181,4 +181,13 @@ function publicJob(job, includeEvents = false) {
 function sanitize(value, secret) {
   const text = String(value ?? '');
   return secret ? text.split(secret).join('[redacted]') : text;
+}
+
+function slugTitle(title) {
+  return title
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48) || 'app';
 }

@@ -33,6 +33,7 @@ export function createConsoleServer({
   });
 
   async function handle(req, res) {
+    applySecurityHeaders(res);
     const url = new URL(req.url || '/', 'http://localhost');
     const pathname = decodeURIComponent(url.pathname);
 
@@ -174,4 +175,14 @@ function sseHeaders() {
     'cache-control': 'no-cache',
     connection: 'keep-alive',
   };
+}
+
+function applySecurityHeaders(res) {
+  res.setHeader('x-content-type-options', 'nosniff');
+  res.setHeader('referrer-policy', 'no-referrer');
+  res.setHeader('cross-origin-opener-policy', 'same-origin');
+  res.setHeader(
+    'content-security-policy',
+    "default-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-src http://127.0.0.1:* http://localhost:*",
+  );
 }

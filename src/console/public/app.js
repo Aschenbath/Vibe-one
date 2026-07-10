@@ -325,13 +325,14 @@ function renderStages(job) {
     if (event.type.startsWith('fix:') || event.type.startsWith('repair:')) reached.add('repairing');
   }
   if (job.status === 'success' || job.status === 'planned') reached.add('success');
-  const activeIndex = Math.max(0, stages.indexOf(job.stage));
+  const failedStage = job.status === 'failed'
+    ? (stages.includes(job.stage) ? job.stage : [...stages].reverse().find((stage) => reached.has(stage)) || 'planning')
+    : null;
   for (const item of elements.stageTrack.querySelectorAll('li')) {
     const stage = item.dataset.stage;
-    const index = stages.indexOf(stage);
     item.classList.toggle('active', !job.terminal && stage === job.stage);
-    item.classList.toggle('done', reached.has(stage) || (job.status === 'success' && index <= activeIndex));
-    item.classList.toggle('failed', job.status === 'failed' && stage === job.stage);
+    item.classList.toggle('done', reached.has(stage) && stage !== failedStage);
+    item.classList.toggle('failed', stage === failedStage);
   }
 }
 

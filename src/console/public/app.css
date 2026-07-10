@@ -219,7 +219,7 @@ textarea:focus, input:focus { border-color: var(--active); }
 .event-row:hover { background: #272a26; }
 .event-row.retry, .event-row.fatal { border-left-color: var(--error); background: rgba(184, 59, 51, 0.1); }
 .event-time { color: #7e847a; }
-.event-type { color: #f0a391; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.event-type { color: #f0a391; overflow-wrap: anywhere; }
 .event-summary { min-width: 0; overflow-wrap: anywhere; color: #d9ddd5; }
 .log-empty { padding: 26px 12px; color: #858b81; text-align: center; }
 

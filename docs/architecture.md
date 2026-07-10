@@ -35,6 +35,31 @@ input/brief.md + constraints.json
 | `core/fixer.js` | failure evidence | patched files + diagnosis | 1 per round |
 | `reporter/deliveryReport.js` | run context + results | `DELIVERY_REPORT.md` | 0 |
 
+## Local console flow
+
+```text
+browser workspace
+    |  JSON commands + SSE events
+    v
+[console/server] -> [job manager] -> runPipeline()
+       |                 |
+       |                 +-> session-only credentials + one active job
+       |
+       +-> [run store] -> reports / screenshots / persisted history
+       |
+       +-> [preview manager] -> one owned Vite preview process
+```
+
+| console module | responsibility |
+| --- | --- |
+| `console/server.js` | loopback HTTP routing, SSE clients, static assets, and shutdown |
+| `console/jobManager.js` | session config, validation, one-active-job state, event fan-out |
+| `console/runStore.js` | reconstruct public run metadata and jail report/screenshot reads |
+| `console/previewManager.js` | reuse one generated-app preview and stop it on replacement/shutdown |
+| `console/public/` | framework-free responsive browser workspace |
+
+The console calls `runPipeline()` in process. `runContext.logEvent()` persists each event to `events.jsonl` before mirroring it to the job manager, so browser delivery never replaces the durable audit trail.
+
 ## Safety boundaries
 
 - **Path jail**: every model-provided path passes `safeJoin(appDir, path)`; absolute paths and `..` traversal throw.
@@ -47,6 +72,10 @@ input/brief.md + constraints.json
 - **Run output root**: `runs/` is resolved from the project root (not `targetDir/../..`), overridable via `VIBE_ONE_RUNS_DIR` or `constraints.runsRoot`.
 - **Gateway resilience**: chat completions stream by default, retry network/429/500/502/503/504 failures within a hard budget, and use a separate 10-minute streaming timeout.
 - **Bounded model output**: the text-brief builder asks for at most 8 files and roughly 12,000 characters so a generated MVP stays inspectable and gateway-friendly.
+- **Loopback-only console**: the HTTP server binds `127.0.0.1` by default and does not expose the control plane to the LAN.
+- **Session-only secret**: browser-entered API keys stay in process memory, are removed from public job objects, and are never written into console inputs or run artifacts.
+- **Console artifact jail**: run IDs, reports, screenshots, and preview targets are resolved beneath the configured runs root; screenshot names are additionally jailed beneath each `screenshots/` directory.
+- **Single preview owner**: the console keeps at most one long-lived Vite preview and stops it when another run is opened or the server shuts down.
 
 ## Extension points (post-MVP)
 

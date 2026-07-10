@@ -10,6 +10,20 @@ brief.md -> SPEC.generated.md -> generated app -> build + preview + screenshots 
 
 See `FRAMEWORK.md` for the product boundary and `docs/architecture.md` for module details.
 
+## Local console
+
+Vibe-one now includes a browser control plane for the existing pipeline:
+
+```bash
+npm run console
+```
+
+Open the printed loopback URL. The console accepts a product brief, Full Run or Plan Only mode, model settings, and an optional session-only API key. It streams pipeline events, keeps local run history, exposes screenshots and Delivery Reports, and launches successful generated apps in an embedded preview.
+
+![Vibe-one local console](docs/screenshots/console-desktop.png)
+
+The browser never persists an API key. A key entered in the page remains only in the current Node process; environment variables are still supported and take over when no session override is present.
+
 ## Verified demos
 
 Both committed demos were generated through a real OpenAI-compatible API with `gpt-5.6-sol`, then verified locally without model-based self-review.
@@ -33,7 +47,7 @@ npm install
 npx playwright install chromium
 ```
 
-Set the endpoint in the current shell. The CLI reads `process.env` directly and never writes the key into a run artifact.
+For CLI use, set the endpoint in the current shell. The CLI reads `process.env` directly and never writes the key into a run artifact. For browser use, `npm run console` also accepts a session-only key on the page.
 
 PowerShell:
 
@@ -73,10 +87,11 @@ Chat completions stream by default. Streaming prevents long builder responses fr
 
 ```bash
 npm test
+npm run test:console:e2e
 VIBE_ONE_E2E=1 npm test
 ```
 
-The default suite is offline. The opt-in e2e suite drives real npm install/build, Vite preview, Playwright screenshots, interaction scenarios, and a deterministic failed-then-repaired notes run without spending API quota.
+The default suite is offline. `npm run test:console:e2e` drives the browser workspace at desktop and mobile viewports with a stub pipeline. The opt-in pipeline e2e suite drives real npm install/build, Vite preview, Playwright screenshots, interaction scenarios, and a deterministic failed-then-repaired notes run without spending API quota.
 
 Each real run writes to `runs/<target>-<timestamp>/`:
 
@@ -92,6 +107,7 @@ Each real run writes to `runs/<target>-<timestamp>/`:
 
 ```text
 src/cli/        entry, status-to-exit-code mapping
+src/console/    local HTTP/SSE API, job history, preview ownership, browser UI
 src/core/       config, run context, pipeline, planner, builder, reviewer, fixer
 src/providers/  single streaming OpenAI-compatible chat provider
 src/runner/     command execution, preview server, Playwright checks
@@ -109,4 +125,7 @@ src/reporter/   DELIVERY_REPORT.md generation
 
 ## Status
 
-The text-brief MVP, bounded repair loop, two successful real demos, failed-then-repaired evidence, committed reports, and README screenshots are complete. Screenshot input and visual similarity scoring remain the Phase 3 boundary defined in `FRAMEWORK.md`.
+- **Engine:** the text-brief pipeline, bounded repair loop, two real demos, failed-then-repaired evidence, reports, and generated-app screenshots are complete.
+- **Console:** the local browser workspace supports brief entry, model configuration, session-only credentials, live events, persisted history, screenshots, reports, and generated-app previews.
+
+Screenshot input and visual similarity scoring remain the Phase 3 boundary defined in `FRAMEWORK.md`. Remote hosting, authentication, concurrent jobs, durable credentials, and mid-command cancellation are not part of the local console.
