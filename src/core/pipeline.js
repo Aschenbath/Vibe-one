@@ -69,7 +69,26 @@ export async function runPipeline({ targetDir, config, planOnly = false, provide
         break;
       }
       const failure = describeFailure(verdict);
-      await fix(ctx, provider, { failure, round: rounds + 1 });
+      const visualFailures = visualResults
+        .filter((result) => !result.pass && result.actualImage)
+        .map((result) => {
+          const reference = (config.references ?? []).find(
+            (item) => item.name === result.referenceImage,
+          );
+          if (!reference) return null;
+          return {
+            ...result,
+            referenceFile: path.join(ctx.referencesDir, reference.name),
+            actualFile: path.join(ctx.screenshotsDir, result.actualImage),
+            referenceType: reference.type,
+          };
+        })
+        .filter(Boolean);
+      await fix(ctx, provider, {
+        failure,
+        round: rounds + 1,
+        visualFailures,
+      });
     }
   } catch (err) {
     fatal = err;
@@ -87,7 +106,17 @@ export async function runPipeline({ targetDir, config, planOnly = false, provide
       JSON.stringify(visualHistory, null, 2),
       'utf8',
     );
-    await writeReport(ctx, { config, spec, status, rounds, finalReview, shots, scenarioResults, error: fatal });
+    await writeReport(ctx, {
+      config,
+      spec,
+      status,
+      rounds,
+      finalReview,
+      shots,
+      scenarioResults,
+      visualHistory,
+      error: fatal,
+    });
     return { runId: ctx.runId, runDir: ctx.runDir, status };
   }
 }

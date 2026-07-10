@@ -8,7 +8,8 @@ import { BUILDER_SYSTEM, safeJoin } from '../src/core/builder.js';
 import { parseFileBlocks } from '../src/core/builder.js';
 import { createProvider, extractJson, resolveRequestTimeout } from '../src/providers/openaiCompatible.js';
 import { review } from '../src/core/reviewer.js';
-import { describeFailure, gatherSource } from '../src/core/fixer.js';
+import { createFixerUserContent, describeFailure, gatherSource } from '../src/core/fixer.js';
+import { writeReport } from '../src/reporter/deliveryReport.js';
 import { exitCodeForStatus } from '../src/cli/status.js';
 import { createRunContext } from '../src/core/runContext.js';
 import { loadConfig } from '../src/core/config.js';
@@ -398,6 +399,80 @@ test('gatherSource collects app source and skips scaffold + node_modules', async
   assert.doesNotMatch(out, /node_modules/); // deps excluded
 
   await fs.rm(dir, { recursive: true, force: true });
+});
+
+test('visual repair content includes diagnostics, reference, and generated screenshot', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-visual-fix-'));
+  const reference = path.join(root, 'reference.png');
+  const actual = path.join(root, 'actual.png');
+  await fs.writeFile(reference, ONE_PIXEL_PNG);
+  await fs.writeFile(actual, ONE_PIXEL_PNG);
+
+  try {
+    const content = await createFixerUserContent({
+      round: 1,
+      failure: 'visual similarity failed',
+      source: '=== FILE: src/App.jsx\nexport default 1\n=== END ===',
+      visualFailures: [{
+        page: 'Home',
+        referenceFile: reference,
+        actualFile: actual,
+        referenceType: 'image/png',
+        score: 0.4,
+        threshold: 0.62,
+      }],
+    });
+
+    assert.equal(content.filter((part) => part.type === 'image_url').length, 2);
+    assert.match(content[0].text, /visual similarity failed/);
+    assert.match(content[1].text, /Home.*0\.4.*0\.62/s);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('delivery report records input references and visual score history', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-visual-report-'));
+  const ctx = {
+    runId: 'visual-run',
+    runDir: root,
+    events: [],
+    usage: { promptTokens: 0, completionTokens: 0, calls: 0 },
+    async logEvent(type, data) {
+      this.events.push({ type, ...data });
+    },
+  };
+  const config = {
+    model: 'stub',
+    baseUrl: 'http://local/v1',
+    stack: 'react-vite',
+    maxRepairRounds: 1,
+    references: [{ name: 'home.png', width: 390, height: 844, type: 'image/png' }],
+  };
+  const visualHistory = [
+    { round: 0, results: [{ page: 'Home', score: 0.54, threshold: 0.62, structure: 0.61, color: 0.3767, pass: false }] },
+    { round: 1, results: [{ page: 'Home', score: 0.7812, threshold: 0.62, structure: 0.79, color: 0.7607, pass: true }] },
+  ];
+
+  await writeReport(ctx, {
+    config,
+    spec: { summary: 'Visual app' },
+    status: 'success',
+    rounds: 1,
+    finalReview: { checks: [] },
+    shots: [],
+    scenarioResults: [],
+    visualHistory,
+    error: null,
+  });
+  const report = await fs.readFile(path.join(root, 'DELIVERY_REPORT.md'), 'utf8');
+
+  assert.match(report, /## Input references/);
+  assert.match(report, /home\.png.*390x844.*image\/png/);
+  assert.match(report, /### Round 0[\s\S]*0\.5400 \/ 0\.6200/);
+  assert.match(report, /### Round 1[\s\S]*0\.7812 \/ 0\.6200/);
+  assert.doesNotMatch(report, /Visual similarity to any reference is not scored/);
+  await fs.rm(root, { recursive: true, force: true });
 });
 
 test('run context mirrors persisted events to an optional listener', async () => {

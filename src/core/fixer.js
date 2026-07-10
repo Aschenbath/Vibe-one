@@ -23,19 +23,15 @@ ${DIAG_MARK}
 
 Rules: return COMPLETE file contents (no diffs), touch as few files as possible, do not add dependencies unless the error proves one is missing.`;
 
-export async function fix(ctx, provider, { failure, round }) {
+export async function fix(ctx, provider, { failure, round, visualFailures = [] }) {
   await ctx.logEvent('fix:start', { summary: `repair round ${round}` });
   const source = await gatherSource(ctx.appDir);
-  const user = [
-    `Repair round ${round}.`,
-    'Failure evidence:',
-    failure.slice(0, 12_000), // keep the repair prompt compact
-    '',
-    'Current app source (authoritative - patch against THIS, do not invent APIs):',
+  const user = await createFixerUserContent({
+    round,
+    failure,
     source,
-    '',
-    'Return corrected files.',
-  ].join('\n');
+    visualFailures,
+  });
 
   const { content, usage } = await provider.chat({ system: SYSTEM, user });
   ctx.addUsage(usage);
@@ -49,6 +45,56 @@ export async function fix(ctx, provider, { failure, round }) {
     files: files.map((f) => f.path),
   });
   return { diagnosis, files: files.map((f) => f.path) };
+}
+
+export async function createFixerUserContent({
+  round,
+  failure,
+  source,
+  visualFailures = [],
+}) {
+  const text = [
+    `Repair round ${round}.`,
+    'Failure evidence:',
+    failure.slice(0, 12_000), // keep the repair prompt compact
+    '',
+    'Current app source (authoritative - patch against THIS, do not invent APIs):',
+    source,
+    '',
+    'Return corrected files.',
+  ].join('\n');
+  if (!visualFailures.length) return text;
+
+  const parts = [{
+    type: 'text',
+    text: [
+      `Repair round ${round}.`,
+      'Failure evidence:',
+      failure.slice(0, 12_000),
+      '',
+      'Current app source:',
+      source,
+      '',
+      'Fix each visual failure without breaking the build or verified interactions.',
+    ].join('\n'),
+  }];
+  for (const item of visualFailures) {
+    parts.push({
+      type: 'text',
+      text: `${item.page}: score=${item.score}, threshold=${item.threshold}. Reference image follows, then current generated output.`,
+    });
+    parts.push(await fileImagePart(item.referenceFile, item.referenceType));
+    parts.push(await fileImagePart(item.actualFile, 'image/png'));
+  }
+  return parts;
+}
+
+async function fileImagePart(file, type) {
+  const bytes = await fs.readFile(file);
+  return {
+    type: 'image_url',
+    image_url: { url: `data:${type};base64,${bytes.toString('base64')}` },
+  };
 }
 
 // Reads the current model-authored source under appDir (skips node_modules,
