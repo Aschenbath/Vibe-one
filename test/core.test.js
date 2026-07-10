@@ -12,8 +12,18 @@ import { describeFailure, gatherSource } from '../src/core/fixer.js';
 import { exitCodeForStatus } from '../src/cli/status.js';
 import { createRunContext } from '../src/core/runContext.js';
 import { loadConfig } from '../src/core/config.js';
+import {
+  REFERENCE_LIMITS,
+  normalizeReferencePayloads,
+  writeReferencePayloads,
+  discoverReferenceImages,
+} from '../src/core/referenceImages.js';
 
 const APP = path.resolve('/tmp/run/app');
+const ONE_PIXEL_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+  'base64',
+);
 
 test('package test command is compatible with the Node 20 CI runner', async () => {
   const pkg = JSON.parse(await fs.readFile(new URL('../package.json', import.meta.url), 'utf8'));
@@ -279,5 +289,82 @@ test('loadConfig accepts an in-memory API key without persisting it', async () =
 
   assert.equal(config.apiKey, 'session-secret');
   assert.doesNotMatch(await fs.readFile(path.join(root, 'input', 'brief.md'), 'utf8'), /session-secret/);
+  await fs.rm(root, { recursive: true, force: true });
+});
+
+test('reference images validate magic bytes, dimensions, names, and limits', () => {
+  const refs = normalizeReferencePayloads([{
+    name: '../Home Screen.PNG',
+    type: 'image/png',
+    width: 1,
+    height: 1,
+    base64: ONE_PIXEL_PNG.toString('base64'),
+  }]);
+  assert.deepEqual(refs.map(({ name, type, width, height }) => ({ name, type, width, height })), [{
+    name: 'home-screen.png', type: 'image/png', width: 1, height: 1,
+  }]);
+  assert.throws(
+    () => normalizeReferencePayloads([{
+      name: 'bad.png',
+      type: 'image/png',
+      width: 1,
+      height: 1,
+      base64: Buffer.from('not-png').toString('base64'),
+    }]),
+    /REFERENCE_INVALID/,
+  );
+  assert.throws(
+    () => normalizeReferencePayloads(Array.from(
+      { length: REFERENCE_LIMITS.maxFiles + 1 },
+      (_, i) => ({
+        name: `${i}.png`,
+        type: 'image/png',
+        width: 1,
+        height: 1,
+        base64: ONE_PIXEL_PNG.toString('base64'),
+      }),
+    )),
+    /REFERENCE_COUNT_EXCEEDED/,
+  );
+});
+
+test('reference images persist and loadConfig accepts screenshot-only input', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-reference-'));
+  await fs.mkdir(path.join(root, 'input'), { recursive: true });
+  const refs = normalizeReferencePayloads([{
+    name: 'home.png',
+    type: 'image/png',
+    width: 1,
+    height: 1,
+    base64: ONE_PIXEL_PNG.toString('base64'),
+  }]);
+  await writeReferencePayloads(path.join(root, 'input'), refs);
+  const discovered = await discoverReferenceImages(path.join(root, 'input'));
+  assert.equal(discovered.length, 1);
+  assert.equal(discovered[0].name, 'home.png');
+  const config = await loadConfig(root, { apiKey: 'session-secret' });
+  assert.equal(config.brief, '');
+  assert.equal(config.references.length, 1);
+  await fs.rm(root, { recursive: true, force: true });
+});
+
+test('reference discovery rejects manifest paths outside the references directory', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-reference-jail-'));
+  const inputDir = path.join(root, 'input');
+  const referencesDir = path.join(inputDir, 'references');
+  await fs.mkdir(referencesDir, { recursive: true });
+  await fs.writeFile(path.join(inputDir, 'outside.png'), ONE_PIXEL_PNG);
+  await fs.writeFile(
+    path.join(referencesDir, 'manifest.json'),
+    JSON.stringify([{
+      name: '../outside.png',
+      type: 'image/png',
+      width: 1,
+      height: 1,
+      bytes: ONE_PIXEL_PNG.length,
+    }]),
+  );
+
+  await assert.rejects(discoverReferenceImages(inputDir), /REFERENCE_PATH_INVALID/);
   await fs.rm(root, { recursive: true, force: true });
 });
