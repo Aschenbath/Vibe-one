@@ -99,6 +99,82 @@ function createStubProvider() {
   };
 }
 
+const NOTES_SPEC = {
+  summary: 'Minimal notes app used to prove a failed build can be repaired.',
+  pages: [{ name: 'Notes', route: '/', purpose: 'list notes', mustContain: ['Notes', 'Project brief'] }],
+  components: [{ name: 'App', usedBy: 'Notes' }],
+  dataModel: [{ entity: 'Note', fields: ['id', 'title'] }],
+  interactions: ['click Add note appends a note'],
+  acceptance: ['Seeded note is visible', 'Add creates a visible note'],
+  scenarios: [
+    { name: 'add creates a visible note', route: '/', steps: [{ action: 'click', target: 'Add note' }], expectText: 'New note' },
+  ],
+};
+
+const NOTES_SHARED_FILES = [
+  {
+    path: 'index.html',
+    content: `<!doctype html>
+<html lang="en">
+  <head><meta charset="UTF-8" /><title>Notes</title></head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
+`,
+  },
+  {
+    path: 'src/main.jsx',
+    content: `import React from 'react';
+import { createRoot } from 'react-dom/client';
+import App from './App.jsx';
+createRoot(document.getElementById('root')).render(<App />);
+`,
+  },
+];
+
+const BROKEN_NOTES_APP = `import React, { useState } from 'react';
+
+export default function App() {
+  const [notes, setNotes] = useState(['Project brief']);
+  return (
+    <main style={{ fontFamily: 'sans-serif', padding: 16 }}>
+      <h1>Notes</h1>
+      <button onClick={() => setNotes((items) => [...items, 'New note'])}>Add note</button>
+      <ul>{notes.map((note) => <li key={note}>{note}</li>)}</ul>
+    </main>
+  );
+`;
+
+const FIXED_NOTES_APP = `${BROKEN_NOTES_APP}}\n`;
+
+function createRepairingNotesProvider() {
+  const usage = { prompt_tokens: 10, completion_tokens: 20 };
+  let chatCalls = 0;
+  return {
+    async chatJson() {
+      return { json: NOTES_SPEC, usage, model: 'stub-repair' };
+    },
+    async chat() {
+      chatCalls += 1;
+      if (chatCalls === 1) {
+        const files = [...NOTES_SHARED_FILES, { path: 'src/App.jsx', content: BROKEN_NOTES_APP }];
+        const content = files.map((file) => `=== FILE: ${file.path}\n${file.content}=== END ===`).join('\n');
+        return { content, usage, model: 'stub-repair' };
+      }
+      return {
+        content: `=== DIAGNOSIS ===
+Restored the missing component closure and kept the Add note interaction.
+=== FILE: src/App.jsx
+${FIXED_NOTES_APP}=== END ===`,
+        usage,
+        model: 'stub-repair',
+      };
+    },
+  };
+}
+
 test('full pipeline succeeds end-to-end with a stub model (no API)', { skip: !ENABLED, timeout: 300_000 }, async () => {
   // Canonicalize Windows 8.3 temp aliases (for example ASCHEN~1). Vite/Rollup
   // otherwise sees the long and short spellings as different roots.
@@ -134,6 +210,39 @@ test('full pipeline succeeds end-to-end with a stub model (no API)', { skip: !EN
   // The fixed scaffold was written by the pipeline, not the model.
   const pkg = JSON.parse(await fs.readFile(path.join(result.runDir, 'app', 'package.json'), 'utf8'));
   assert.equal(pkg.scripts.build, 'vite build');
+
+  await fs.rm(tmpRoot, { recursive: true, force: true });
+});
+
+test('repair loop fixes a broken notes app and reaches success', { skip: !ENABLED, timeout: 300_000 }, async () => {
+  const provider = createRepairingNotesProvider();
+  const tmpRoot = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-one-repair-e2e-')));
+  const targetDir = path.join(tmpRoot, 'notes-mobile');
+  const brief = '# Notes\nList notes and let the user add a new note.\n';
+  await fs.mkdir(path.join(targetDir, 'input'), { recursive: true });
+  await fs.writeFile(path.join(targetDir, 'input', 'brief.md'), brief);
+
+  const config = {
+    stack: 'react-vite',
+    viewport: { width: 390, height: 844 },
+    maxRepairRounds: 1,
+    model: 'stub-repair',
+    baseUrl: 'http://stub.local/v1',
+    temperature: 0.2,
+    brief,
+    runsRoot: path.join(tmpRoot, 'runs'),
+  };
+
+  const result = await runPipeline({ targetDir, config, provider });
+
+  assert.equal(result.status, 'success', 'pipeline should recover after one repair round');
+  const report = await fs.readFile(path.join(result.runDir, 'DELIVERY_REPORT.md'), 'utf8');
+  assert.match(report, /Repair rounds used: 1\/1/);
+  assert.match(report, /restored the missing component closure/i);
+  assert.match(report, /add creates a visible note/i);
+
+  const shots = await fs.readdir(path.join(result.runDir, 'screenshots'));
+  assert.ok(shots.some((f) => f.startsWith('scenario-') && f.endsWith('.png')));
 
   await fs.rm(tmpRoot, { recursive: true, force: true });
 });

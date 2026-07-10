@@ -4,13 +4,26 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { safeJoin } from '../src/core/builder.js';
+import { BUILDER_SYSTEM, safeJoin } from '../src/core/builder.js';
 import { parseFileBlocks } from '../src/core/builder.js';
-import { extractJson } from '../src/providers/openaiCompatible.js';
+import { createProvider, extractJson, resolveRequestTimeout } from '../src/providers/openaiCompatible.js';
 import { review } from '../src/core/reviewer.js';
 import { describeFailure, gatherSource } from '../src/core/fixer.js';
+import { exitCodeForStatus } from '../src/cli/status.js';
 
 const APP = path.resolve('/tmp/run/app');
+
+test('builder prompt keeps model output within the gateway-friendly MVP budget', () => {
+  assert.match(BUILDER_SYSTEM, /at most 8 files/i);
+  assert.match(BUILDER_SYSTEM, /12,000 characters/i);
+  assert.match(BUILDER_SYSTEM, /src\/App\.jsx/);
+});
+
+test('planned and successful runs exit cleanly', () => {
+  assert.equal(exitCodeForStatus('planned'), 0);
+  assert.equal(exitCodeForStatus('success'), 0);
+  assert.equal(exitCodeForStatus('failed'), 2);
+});
 
 test('safeJoin allows normal relative paths', () => {
   assert.equal(safeJoin(APP, 'src/main.jsx'), path.resolve(APP, 'src/main.jsx'));
@@ -36,6 +49,76 @@ test('extractJson tolerates markdown fences', () => {
   assert.deepEqual(extractJson('```json\n{"a":1}\n```'), { a: 1 });
   assert.deepEqual(extractJson('{"a":1}'), { a: 1 });
   assert.throws(() => extractJson('not json'));
+});
+
+test('provider retries transient gateway failures', async (t) => {
+  const originalFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    if (calls === 1) return new Response('gateway timeout', { status: 504, headers: { 'retry-after': '0' } });
+    return new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }], model: 'stub' }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+
+  const provider = createProvider({
+    apiKey: 'test-key',
+    baseUrl: 'http://stub.local/v1',
+    model: 'stub',
+    temperature: 0,
+    maxNetworkRetries: 1,
+    requestTimeoutMs: 1000,
+  });
+  const result = await provider.chat({ user: 'hello' });
+
+  assert.equal(result.content, 'ok');
+  assert.equal(calls, 2);
+});
+
+test('provider collects streamed chat completions across SSE chunks', async (t) => {
+  const originalFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+  let requestBody;
+  globalThis.fetch = async (_url, options) => {
+    requestBody = JSON.parse(options.body);
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode('data: {"model":"stub","choices":[{"delta":{"content":"Hel'));
+        controller.enqueue(encoder.encode('lo "}}]}\n\ndata: {"choices":[{"delta":{"content":"world"}}]}\n\n'));
+        controller.enqueue(encoder.encode('data: {"choices":[],"usage":{"prompt_tokens":3,"completion_tokens":2}}\n\ndata: [DONE]\n\n'));
+        controller.close();
+      },
+    });
+    return new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+  };
+
+  const provider = createProvider({
+    apiKey: 'test-key',
+    baseUrl: 'http://stub.local/v1',
+    model: 'stub',
+    temperature: 0,
+    maxNetworkRetries: 0,
+    requestTimeoutMs: 1000,
+  });
+  const result = await provider.chat({ user: 'hello' });
+
+  assert.equal(requestBody.stream, true);
+  assert.equal(result.content, 'Hello world');
+  assert.deepEqual(result.usage, { prompt_tokens: 3, completion_tokens: 2 });
+});
+
+test('streaming requests use a longer timeout than non-streaming requests', () => {
+  assert.equal(resolveRequestTimeout({ requestTimeoutMs: 120_000 }, false), 120_000);
+  assert.equal(resolveRequestTimeout({ requestTimeoutMs: 120_000 }, true), 600_000);
+  assert.equal(resolveRequestTimeout({ requestTimeoutMs: 120_000, streamRequestTimeoutMs: 300_000 }, true), 300_000);
 });
 
 test('parseFileBlocks handles the delimiter protocol with tricky content', () => {

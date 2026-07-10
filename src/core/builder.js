@@ -16,7 +16,7 @@ import path from 'node:path';
 const FILE_MARK = '=== FILE:';
 const END_MARK = '=== END ===';
 
-const SYSTEM = `You are the builder of a bounded app-replication pipeline.
+export const BUILDER_SYSTEM = `You are the builder of a bounded app-replication pipeline.
 Target stack: React 18 + Vite, plain CSS, mock data in src/data/.
 The build system already provides package.json and vite.config.js - DO NOT output them.
 Available dependencies (nothing else is installed): react, react-dom, react-router-dom.
@@ -34,7 +34,10 @@ Rules:
 - Must include index.html at the root and src/main.jsx as the entry.
 - One component per planned page; implement the planned interactions with real state updates.
 - Use accessible labels/roles (real <button>, <input> with placeholder/label) so interactions are testable.
-- Keep total under ~25 files. No binary files. No placeholder TODO stubs for core flows.`;
+- Hard response budget: at most 8 files and about 12,000 characters total.
+- Prefer index.html, src/main.jsx, src/App.jsx, src/styles.css, and at most a few small data/helper files.
+- Keep page components together in src/App.jsx when that avoids boilerplate; omit long comments and repeated CSS.
+- No binary files. No placeholder TODO stubs for core flows.`;
 
 // Files only the pipeline may write. Model attempts to write these are rejected.
 const FORBIDDEN_FILES = new Set([
@@ -77,7 +80,7 @@ export async function build(ctx, provider, config, spec) {
     'Approved spec JSON:', JSON.stringify(spec, null, 2),
   ].join('\n');
 
-  const { content, usage } = await provider.chat({ system: SYSTEM, user });
+  const { content, usage } = await provider.chat({ system: BUILDER_SYSTEM, user });
   ctx.addUsage(usage);
 
   const files = parseFileBlocks(content);

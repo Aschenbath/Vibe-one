@@ -12,6 +12,7 @@
   "scripts": {
     "start": "node src/cli/index.js",
     "demo:expense": "node src/cli/index.js run examples/expense-mobile",
+    "demo:notes": "node src/cli/index.js run examples/notes-mobile",
     "test": "node --test \"test/*.test.js\""
   },
   "devDependencies": {

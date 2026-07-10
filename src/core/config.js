@@ -15,6 +15,7 @@ const DEFAULTS = {
   // both transient fetch failures and 429s; requestTimeoutMs bounds each attempt.
   maxNetworkRetries: Number(process.env.VIBE_ONE_MAX_RETRIES) || 6,
   requestTimeoutMs: Number(process.env.VIBE_ONE_REQUEST_TIMEOUT_MS) || 120_000,
+  streamRequestTimeoutMs: Number(process.env.VIBE_ONE_STREAM_TIMEOUT_MS) || 600_000,
 };
 
 export async function loadConfig(targetDir) {

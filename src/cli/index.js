@@ -5,6 +5,7 @@
 //   node src/cli/index.js plan <target-dir>  Planner only: generate SPEC/PLAN without building
 import { runPipeline } from '../core/pipeline.js';
 import { loadConfig } from '../core/config.js';
+import { exitCodeForStatus } from './status.js';
 import path from 'node:path';
 import process from 'node:process';
 
@@ -34,7 +35,7 @@ async function main() {
   const result = await runPipeline({ targetDir, config, planOnly: cmd === 'plan' });
   console.log(`\nRun ${result.runId} finished: ${result.status}`);
   console.log(`Artifacts: ${result.runDir}`);
-  if (result.status !== 'success') process.exitCode = 2;
+  process.exitCode = exitCodeForStatus(result.status);
 }
 
 main().catch((err) => {

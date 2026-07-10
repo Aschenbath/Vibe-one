@@ -246,6 +246,15 @@ The project is considered interview-ready when it has:
 - Screenshots included in the repo or README.
 - A concise explanation of why API-based automation is different from manual AI editing.
 
+### Current evidence (2026-07-10)
+
+The interview bar above is satisfied for the text-brief scope:
+
+- Expense tracker: real-model success on round 0, with 3 pages and 4 interaction scenarios.
+- Notes app: real-model success after repair round 1, with the diagnosis and patched file retained.
+- Eight generated screenshots and both Delivery Reports are committed under `docs/`.
+- Local unit tests and opt-in npm/Vite/Playwright e2e tests are reproducible without API quota.
+
 ## Implementation Phases
 
 ### Phase 0 - Documentation
@@ -293,4 +302,4 @@ The project is considered interview-ready when it has:
 
 ## Current Decision
 
-Start with a narrow, API-backed, text-brief-to-running-app pipeline. Treat screenshot recognition as the second milestone, not the first blocker.
+The narrow API-backed text-brief pipeline and bounded repair loop are complete. Keep them as the verified baseline; reference screenshot input and coarse visual comparison are the next Phase 3 milestone.

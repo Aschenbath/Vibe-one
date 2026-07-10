@@ -9,7 +9,7 @@ input/brief.md + constraints.json
    [Planner] --model--> spec JSON --> SPEC.generated.md / PLAN.generated.md
         |
         v
-   [Builder] --model--> { files[] } --> runs/<id>/app/   (safeJoin path jail)
+   [Builder] --model--> delimited file blocks --> runs/<id>/app/   (safeJoin path jail)
         |
         v
    [Runner]  npm install -> npm run build -> vite preview -> Playwright screenshots
@@ -27,6 +27,7 @@ input/brief.md + constraints.json
 | module | input | output | model calls |
 | --- | --- | --- | --- |
 | `core/config.js` | targetDir | merged config (constraints > env > defaults) | 0 |
+| `providers/openaiCompatible.js` | system + user prompts | streamed or JSON chat result + usage | 1 per request |
 | `core/planner.js` | brief | spec JSON (pages+mustContain, scenarios) + 2 markdown artifacts | 1 |
 | `core/builder.js` | brief + spec | fixed scaffold (package.json/vite.config) + model files under `app/` | 1 |
 | `runner/commands.js` | appDir | command records + screenshots + page text + scenario results | 0 |
@@ -44,6 +45,8 @@ input/brief.md + constraints.json
 - **Honest status**: `success` requires the mechanical reviewer to pass; fatal errors land in the report under "Fatal error".
 - **Token accounting**: every chat call's `usage` is accumulated on the run context and printed in the report.
 - **Run output root**: `runs/` is resolved from the project root (not `targetDir/../..`), overridable via `VIBE_ONE_RUNS_DIR` or `constraints.runsRoot`.
+- **Gateway resilience**: chat completions stream by default, retry network/429/500/502/503/504 failures within a hard budget, and use a separate 10-minute streaming timeout.
+- **Bounded model output**: the text-brief builder asks for at most 8 files and roughly 12,000 characters so a generated MVP stays inspectable and gateway-friendly.
 
 ## Extension points (post-MVP)
 
