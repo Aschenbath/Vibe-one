@@ -157,7 +157,7 @@ async function writeModelFile(ctx, file) {
 export function safeJoin(appDir, relPath) {
   const abs = path.resolve(appDir, relPath);
   const rel = path.relative(appDir, abs);
-  if (path.isAbsolute(relPath) || rel.startsWith('..') || path.isAbsolute(rel)) {
+  if (isAbsoluteOnAnyPlatform(relPath) || rel.startsWith('..') || path.isAbsolute(rel)) {
     throw new Error(`unsafe file path from model: ${relPath}`);
   }
   const normalized = rel.split(path.sep).join('/').toLowerCase();
@@ -165,4 +165,9 @@ export function safeJoin(appDir, relPath) {
     throw new Error(`model may not write pipeline-owned file: ${relPath}`);
   }
   return abs;
+}
+
+export function isAbsoluteOnAnyPlatform(value) {
+  const candidate = String(value ?? '');
+  return path.posix.isAbsolute(candidate) || path.win32.isAbsolute(candidate);
 }

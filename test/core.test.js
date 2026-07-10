@@ -47,6 +47,14 @@ test('safeJoin rejects traversal and absolute paths', () => {
   assert.throws(() => safeJoin(APP, 'C:\\Windows\\evil.js'));
 });
 
+test('portable absolute-path detection rejects Windows and POSIX forms on every host OS', async () => {
+  const builder = await import('../src/core/builder.js');
+  assert.equal(builder.isAbsoluteOnAnyPlatform?.('C:\\Windows\\evil.js'), true);
+  assert.equal(builder.isAbsoluteOnAnyPlatform?.('\\\\server\\share\\evil.js'), true);
+  assert.equal(builder.isAbsoluteOnAnyPlatform?.('/etc/passwd'), true);
+  assert.equal(builder.isAbsoluteOnAnyPlatform?.('src/App.jsx'), false);
+});
+
 test('safeJoin rejects pipeline-owned files', () => {
   assert.throws(() => safeJoin(APP, 'package.json'), /pipeline-owned/);
   assert.throws(() => safeJoin(APP, 'vite.config.js'), /pipeline-owned/);
