@@ -280,6 +280,34 @@ test('run context mirrors persisted events to an optional listener', async () =>
   await fs.rm(root, { recursive: true, force: true });
 });
 
+test('run context copies reference evidence into the run directory', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-run-reference-'));
+  const targetDir = path.join(root, 'target');
+  const inputDir = path.join(targetDir, 'input');
+  const referencesDir = path.join(inputDir, 'references');
+  await fs.mkdir(referencesDir, { recursive: true });
+  await fs.writeFile(path.join(referencesDir, 'home.png'), ONE_PIXEL_PNG);
+  await fs.writeFile(
+    path.join(referencesDir, 'manifest.json'),
+    JSON.stringify([{
+      name: 'home.png',
+      type: 'image/png',
+      width: 1,
+      height: 1,
+      bytes: ONE_PIXEL_PNG.length,
+    }]),
+  );
+
+  const ctx = await createRunContext(targetDir, {
+    runsRoot: path.join(root, 'runs'),
+    inputDir,
+  });
+
+  assert.deepEqual(await fs.readFile(path.join(ctx.referencesDir, 'home.png')), ONE_PIXEL_PNG);
+  assert.equal((await fs.stat(ctx.visualDir)).isDirectory(), true);
+  await fs.rm(root, { recursive: true, force: true });
+});
+
 test('loadConfig accepts an in-memory API key without persisting it', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-config-'));
   await fs.mkdir(path.join(root, 'input'), { recursive: true });

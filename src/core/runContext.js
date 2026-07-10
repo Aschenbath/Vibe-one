@@ -22,9 +22,21 @@ export async function createRunContext(targetDir, config = {}) {
     appDir: path.join(runDir, 'app'),
     logsDir: path.join(runDir, 'logs'),
     screenshotsDir: path.join(runDir, 'screenshots'),
+    referencesDir: path.join(runDir, 'references'),
+    visualDir: path.join(runDir, 'visual'),
   };
   for (const dir of Object.values(dirs)) {
     await fs.mkdir(dir, { recursive: true });
+  }
+
+  const sourceReferences = path.join(
+    config.inputDir || path.join(targetDir, 'input'),
+    'references',
+  );
+  try {
+    await fs.cp(sourceReferences, dirs.referencesDir, { recursive: true, force: true });
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
   }
 
   const events = [];
