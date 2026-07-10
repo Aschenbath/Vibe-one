@@ -123,6 +123,47 @@ test('a screenshot-only job persists references without exposing base64, paths, 
   }
 });
 
+test('visual comparison events expose a visual stage and sanitized error code', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-visual-stage-'));
+  let release;
+  let markVisual;
+  const visualReady = new Promise((resolve) => {
+    markVisual = resolve;
+  });
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const manager = createJobManager({
+    runsRoot: root,
+    env: { VIBE_ONE_API_KEY: 'visual-stage-secret' },
+    pipeline: async ({ config }) => {
+      config.onEvent({
+        type: 'visual:compare',
+        code: 'VISUAL_LOW',
+        summary: 'visual-stage-secret score below threshold',
+      });
+      markVisual();
+      await gate;
+      return { runId: 'run-visual', runDir: path.join(root, 'run-visual'), status: 'failed' };
+    },
+  });
+
+  try {
+    const job = await manager.startJob({ brief: '# Visual app', mode: 'run' });
+    await visualReady;
+    const live = manager.getJob(job.id);
+
+    assert.equal(live.stage, 'visual');
+    assert.equal(live.events[0].code, 'VISUAL_LOW');
+    assert.doesNotMatch(JSON.stringify(live), /visual-stage-secret/);
+    release();
+    await manager.waitForJob(job.id);
+  } finally {
+    release?.();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test('run store reconstructs evidence and rejects traversal', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-run-store-'));
   const runDir = path.join(root, 'demo-2026-07-10T12-00-00');

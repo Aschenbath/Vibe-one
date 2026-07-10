@@ -302,6 +302,46 @@ test('review passes only when everything is green', () => {
   assert.equal(missingPage.pass, false);
 });
 
+test('review requires mapped visual comparisons to meet threshold', () => {
+  const spec = {
+    pages: [{ name: 'Home', route: '/', referenceImage: 'home.png' }],
+  };
+  const base = {
+    install: { exitCode: 0 },
+    build: { exitCode: 0 },
+    shots: [okShot],
+    spec,
+    scenarioResults: [],
+  };
+  const fail = review({
+    ...base,
+    visualResults: [{
+      page: 'Home',
+      referenceImage: 'home.png',
+      score: 0.4,
+      structure: 0.5,
+      color: 0.2,
+      threshold: 0.62,
+      pass: false,
+    }],
+  });
+  const pass = review({
+    ...base,
+    visualResults: [{
+      page: 'Home',
+      referenceImage: 'home.png',
+      score: 0.8,
+      structure: 0.8,
+      color: 0.8,
+      threshold: 0.62,
+      pass: true,
+    }],
+  });
+
+  assert.equal(fail.pass, false);
+  assert.equal(pass.pass, true);
+});
+
 test('review enforces mustContain page content', () => {
   const spec = { pages: [{ name: 'Home', route: '/', mustContain: ['本月支出', '¥'] }] };
   const base = { install: { exitCode: 0 }, build: { exitCode: 0 } };

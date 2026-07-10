@@ -131,6 +131,7 @@ export function createJobManager({ runsRoot, pipeline = runPipeline, load = load
       type: String(event.type || 'event'),
       summary: sanitize(event.summary, job.secret),
       ...(event.name ? { name: sanitize(event.name, job.secret) } : {}),
+      ...(event.code ? { code: sanitize(event.code, job.secret) } : {}),
     };
     job.events.push(clean);
     job.stage = stageForEvent(clean.type, job.stage);
@@ -175,6 +176,7 @@ function stageForEvent(type, current) {
   if (type.startsWith('plan:')) return 'planning';
   if (type.startsWith('build:')) return 'building';
   if (type.startsWith('fix:') || type.startsWith('repair:')) return 'repairing';
+  if (type === 'visual:compare') return 'visual';
   if (['cmd:start', 'cmd:done', 'preview:start', 'preview:ready', 'screenshot', 'scenario', 'review'].includes(type)) {
     return 'verifying';
   }
