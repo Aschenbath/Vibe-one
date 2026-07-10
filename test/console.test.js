@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createJobManager } from '../src/console/jobManager.js';
 import { createRunStore } from '../src/console/runStore.js';
+import { createPreviewManager } from '../src/console/previewManager.js';
 
 test('session status exposes key presence but never the key', () => {
   const manager = createJobManager({ runsRoot: path.join(os.tmpdir(), 'vibe-console-status'), pipeline: async () => {} });
@@ -80,4 +81,24 @@ test('run store reconstructs evidence and rejects traversal', async () => {
   await assert.rejects(store.readScreenshot(summary.id, '../DELIVERY_REPORT.md'), /outside/i);
 
   await fs.rm(root, { recursive: true, force: true });
+});
+
+test('preview manager reuses one preview and stops it on replacement', async () => {
+  const stopped = [];
+  let calls = 0;
+  const manager = createPreviewManager({
+    start: async () => {
+      calls += 1;
+      const id = calls;
+      return { url: `http://127.0.0.1:${4100 + id}/`, stop: () => stopped.push(id) };
+    },
+  });
+
+  const first = await manager.open({ id: 'a', status: 'success', appDir: path.join(os.tmpdir(), 'a', 'app') });
+
+  assert.deepEqual(await manager.open({ id: 'a', status: 'success', appDir: path.join(os.tmpdir(), 'a', 'app') }), first);
+  await manager.open({ id: 'b', status: 'success', appDir: path.join(os.tmpdir(), 'b', 'app') });
+  assert.deepEqual(stopped, [1]);
+  manager.close();
+  assert.deepEqual(stopped, [1, 2]);
 });
