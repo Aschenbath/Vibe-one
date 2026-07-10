@@ -152,3 +152,23 @@ test('HTTP API returns structured validation errors', async () => {
   await app.close();
   await fs.rm(root, { recursive: true, force: true });
 });
+
+test('console page exposes the complete operational workflow', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-ui-'));
+  const app = createConsoleServer({ runsRoot: path.join(root, 'runs'), env: {} });
+  const address = await app.listen(0);
+
+  const response = await fetch(address.url);
+  const html = await response.text();
+
+  assert.equal(response.status, 200);
+  assert.match(html, /id="brief"/);
+  assert.match(html, /id="launch-run"/);
+  assert.match(html, /id="run-history"/);
+  assert.match(html, /id="event-log"/);
+  assert.match(html, /id="evidence-pane"/);
+  assert.match(html, /id="preview-frame"/);
+
+  await app.close();
+  await fs.rm(root, { recursive: true, force: true });
+});
