@@ -169,6 +169,8 @@ test('run store reconstructs evidence and rejects traversal', async () => {
   const runDir = path.join(root, 'demo-2026-07-10T12-00-00');
   await fs.mkdir(path.join(runDir, 'logs'), { recursive: true });
   await fs.mkdir(path.join(runDir, 'screenshots'), { recursive: true });
+  await fs.mkdir(path.join(runDir, 'references'), { recursive: true });
+  await fs.mkdir(path.join(runDir, 'visual'), { recursive: true });
   await fs.mkdir(path.join(runDir, 'app'), { recursive: true });
   await fs.writeFile(
     path.join(runDir, 'logs', 'events.jsonl'),
@@ -179,6 +181,34 @@ test('run store reconstructs evidence and rejects traversal', async () => {
     '# Delivery Report\n- Status: **success**\n- Model: demo @ local\n',
   );
   await fs.writeFile(path.join(runDir, 'screenshots', 'home.png'), 'png');
+  await fs.writeFile(path.join(runDir, 'screenshots', 'visual-home.png'), ONE_PIXEL_PNG);
+  await fs.writeFile(path.join(runDir, 'references', 'home.png'), ONE_PIXEL_PNG);
+  await fs.writeFile(
+    path.join(runDir, 'references', 'manifest.json'),
+    JSON.stringify([{
+      name: 'home.png',
+      type: 'image/png',
+      width: 1,
+      height: 1,
+      bytes: ONE_PIXEL_PNG.length,
+    }]),
+  );
+  await fs.writeFile(
+    path.join(runDir, 'visual', 'comparisons.json'),
+    JSON.stringify([{
+      round: 0,
+      results: [{
+        page: '首页',
+        referenceImage: 'home.png',
+        actualImage: 'visual-home.png',
+        score: 0.8,
+        structure: 0.8,
+        color: 0.8,
+        threshold: 0.62,
+        pass: true,
+      }],
+    }]),
+  );
 
   const store = createRunStore(root);
   const [summary] = await store.listRuns();
@@ -188,12 +218,68 @@ test('run store reconstructs evidence and rejects traversal', async () => {
   assert.equal(summary.status, 'success');
   assert.equal(summary.repairCount, 1);
   assert.equal(summary.previewEligible, true);
-  assert.deepEqual(detail.screenshots, ['home.png']);
+  assert.deepEqual(detail.screenshots, ['home.png', 'visual-home.png']);
+  assert.deepEqual(detail.references.map((item) => item.name), ['home.png']);
+  assert.equal(detail.visualComparisons[0].results[0].score, 0.8);
   assert.equal(Object.hasOwn(detail, 'runDir'), false);
+  assert.equal(JSON.stringify(detail).includes(root), false);
   assert.equal((await store.getPreviewTarget(summary.id)).appDir, path.join(runDir, 'app'));
+  const reference = await store.readReference(summary.id, 'home.png');
+  assert.equal(reference.type, 'image/png');
+  assert.deepEqual(reference.data, ONE_PIXEL_PNG);
   await assert.rejects(store.readScreenshot(summary.id, '../DELIVERY_REPORT.md'), /outside/i);
+  await assert.rejects(store.readReference(summary.id, '../home.png'), /outside|invalid/i);
 
   await fs.rm(root, { recursive: true, force: true });
+});
+
+test('HTTP API serves jailed reference images and visual comparison history', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-artifacts-'));
+  const runsRoot = path.join(root, 'runs');
+  const runId = 'visual-run-2026-07-10T12-00-00';
+  const runDir = path.join(runsRoot, runId);
+  await fs.mkdir(path.join(runDir, 'references'), { recursive: true });
+  await fs.mkdir(path.join(runDir, 'visual'), { recursive: true });
+  await fs.writeFile(path.join(runDir, 'DELIVERY_REPORT.md'), '# Delivery Report\n- Status: **success**\n');
+  await fs.writeFile(path.join(runDir, 'references', 'home.png'), ONE_PIXEL_PNG);
+  await fs.writeFile(
+    path.join(runDir, 'references', 'manifest.json'),
+    JSON.stringify([{
+      name: 'home.png',
+      type: 'image/png',
+      width: 1,
+      height: 1,
+      bytes: ONE_PIXEL_PNG.length,
+    }]),
+  );
+  await fs.writeFile(
+    path.join(runDir, 'visual', 'comparisons.json'),
+    JSON.stringify([{ round: 0, results: [{ page: '首页', score: 0.8, pass: true }] }]),
+  );
+  const app = createConsoleServer({ runsRoot, env: {} });
+  const address = await app.listen(0);
+
+  try {
+    const referenceResponse = await fetch(
+      `${address.url}api/jobs/${encodeURIComponent(runId)}/references/home.png`,
+    );
+    assert.equal(referenceResponse.status, 200);
+    assert.equal(referenceResponse.headers.get('content-type'), 'image/png');
+    assert.deepEqual(Buffer.from(await referenceResponse.arrayBuffer()), ONE_PIXEL_PNG);
+
+    const visualResponse = await fetch(
+      `${address.url}api/jobs/${encodeURIComponent(runId)}/visual`,
+    );
+    assert.equal(visualResponse.status, 200);
+    assert.equal((await visualResponse.json())[0].results[0].score, 0.8);
+
+    const jobResponse = await fetch(`${address.url}api/jobs/${encodeURIComponent(runId)}`);
+    const jobText = await jobResponse.text();
+    assert.doesNotMatch(jobText, /vibe-console-artifacts-|AppData|\\Temp\\/i);
+  } finally {
+    await app.close();
+    await fs.rm(root, { recursive: true, force: true });
+  }
 });
 
 test('preview manager reuses one preview and stops it on replacement', async () => {

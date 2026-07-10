@@ -55,7 +55,7 @@ export function createConsoleServer({
       );
     }
 
-    const match = pathname.match(/^\/api\/jobs\/([^/]+)(?:\/(events|report|preview|screenshots)(?:\/(.+))?)?$/);
+    const match = pathname.match(/^\/api\/jobs\/([^/]+)(?:\/(events|report|preview|screenshots|references|visual)(?:\/(.+))?)?$/);
     if (match) {
       const [, id, resource, name] = match;
       if (!resource && req.method === 'GET') return sendJson(res, 200, await getJob(id));
@@ -65,6 +65,13 @@ export function createConsoleServer({
       }
       if (resource === 'screenshots' && name && req.method === 'GET') {
         return sendBuffer(res, 200, await store.readScreenshot(await artifactId(id), name), 'image/png');
+      }
+      if (resource === 'references' && name && req.method === 'GET') {
+        const reference = await store.readReference(await artifactId(id), name);
+        return sendBuffer(res, 200, reference.data, reference.type);
+      }
+      if (resource === 'visual' && !name && req.method === 'GET') {
+        return sendJson(res, 200, await store.readVisualComparisons(await artifactId(id)));
       }
       if (resource === 'preview' && req.method === 'POST') {
         const target = await store.getPreviewTarget(await artifactId(id));
