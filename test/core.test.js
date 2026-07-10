@@ -30,7 +30,7 @@ test('package test command is compatible with the Node 20 CI runner', async () =
   const pkg = JSON.parse(await fs.readFile(new URL('../package.json', import.meta.url), 'utf8'));
   assert.equal(
     pkg.scripts.test,
-    'node --test test/console.test.js test/console-e2e.test.js test/core.test.js test/e2e.test.js',
+    'node --test test/console.test.js test/console-e2e.test.js test/core.test.js test/e2e.test.js test/visual.test.js',
   );
   assert.doesNotMatch(pkg.scripts.test, /[*?]/);
 });
