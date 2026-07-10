@@ -15,6 +15,15 @@ import { loadConfig } from '../src/core/config.js';
 
 const APP = path.resolve('/tmp/run/app');
 
+test('package test command is compatible with the Node 20 CI runner', async () => {
+  const pkg = JSON.parse(await fs.readFile(new URL('../package.json', import.meta.url), 'utf8'));
+  assert.equal(
+    pkg.scripts.test,
+    'node --test test/console.test.js test/console-e2e.test.js test/core.test.js test/e2e.test.js',
+  );
+  assert.doesNotMatch(pkg.scripts.test, /[*?]/);
+});
+
 test('builder prompt keeps model output within the gateway-friendly MVP budget', () => {
   assert.match(BUILDER_SYSTEM, /at most 8 files/i);
   assert.match(BUILDER_SYSTEM, /12,000 characters/i);
