@@ -6,6 +6,7 @@ import path from 'node:path';
 import { createJobManager } from '../src/console/jobManager.js';
 import { createRunStore } from '../src/console/runStore.js';
 import { createPreviewManager } from '../src/console/previewManager.js';
+import { createConsoleServer } from '../src/console/server.js';
 
 test('session status exposes key presence but never the key', () => {
   const manager = createJobManager({ runsRoot: path.join(os.tmpdir(), 'vibe-console-status'), pipeline: async () => {} });
@@ -101,4 +102,53 @@ test('preview manager reuses one preview and stops it on replacement', async () 
   assert.deepEqual(stopped, [1]);
   manager.close();
   assert.deepEqual(stopped, [1, 2]);
+});
+
+test('HTTP API configures a session and starts a job without exposing the key', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-http-'));
+  const pipeline = async ({ config }) => {
+    config.onEvent({ ts: new Date().toISOString(), type: 'plan:start', summary: 'planning' });
+    return { runId: 'run-1', runDir: path.join(root, 'runs', 'run-1'), status: 'planned' };
+  };
+  const app = createConsoleServer({ runsRoot: path.join(root, 'runs'), pipeline, env: {} });
+  const address = await app.listen(0);
+
+  const configResponse = await fetch(`${address.url}api/session/config`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ apiKey: 'http-secret' }),
+  });
+  assert.equal(configResponse.status, 200);
+  assert.equal((await configResponse.text()).includes('http-secret'), false);
+
+  const jobResponse = await fetch(`${address.url}api/jobs`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ title: 'Demo', brief: '# Demo', mode: 'plan' }),
+  });
+  assert.equal(jobResponse.status, 202);
+  assert.equal((await jobResponse.text()).includes('http-secret'), false);
+
+  await app.close();
+  await fs.rm(root, { recursive: true, force: true });
+});
+
+test('HTTP API returns structured validation errors', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-http-errors-'));
+  const app = createConsoleServer({ runsRoot: path.join(root, 'runs'), env: {} });
+  const address = await app.listen(0);
+
+  const response = await fetch(`${address.url}api/jobs`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ brief: '', mode: 'run' }),
+  });
+
+  assert.equal(response.status, 422);
+  assert.deepEqual(await response.json(), {
+    error: { code: 'BRIEF_REQUIRED', message: 'Describe the app before starting.' },
+  });
+
+  await app.close();
+  await fs.rm(root, { recursive: true, force: true });
 });
