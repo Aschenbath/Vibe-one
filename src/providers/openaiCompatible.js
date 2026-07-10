@@ -4,16 +4,19 @@
 export function createProvider(config) {
   async function chat({ system, user, jsonMode = false }) {
     const streamResponses = config.streamResponses !== false;
+    const userContent = normalizeUserContent(user);
     const body = {
       model: config.model,
       temperature: config.temperature,
       messages: [
         ...(system ? [{ role: 'system', content: system }] : []),
-        { role: 'user', content: user },
+        { role: 'user', content: userContent },
       ],
       ...(jsonMode ? { response_format: { type: 'json_object' } } : {}),
       ...(streamResponses ? { stream: true, stream_options: { include_usage: true } } : {}),
     };
+    const multimodal = Array.isArray(userContent)
+      && userContent.some((part) => part.type === 'image_url');
 
     let res;
     const maxRetries = config.maxNetworkRetries ?? 6;
@@ -52,6 +55,17 @@ export function createProvider(config) {
 
     if (!res.ok) {
       const text = await res.text().catch(() => '');
+      if (
+        multimodal
+        && [400, 415, 422].includes(res.status)
+        && /(image|vision|multimodal|content)/i.test(text)
+      ) {
+        const error = new Error(
+          `VISION_UNSUPPORTED: ${text.slice(0, 500) || `HTTP ${res.status}`}`,
+        );
+        error.code = 'VISION_UNSUPPORTED';
+        throw error;
+      }
       throw new Error(`model call failed: HTTP ${res.status} ${text.slice(0, 500)}`);
     }
 
@@ -82,6 +96,22 @@ export function createProvider(config) {
   }
 
   return { chat, chatJson };
+}
+
+function normalizeUserContent(user) {
+  if (typeof user === 'string') return user;
+  if (!Array.isArray(user) || user.length === 0) {
+    throw new Error('model user content must be a string or non-empty content array');
+  }
+  return user.map((part) => {
+    if (part?.type === 'text' && typeof part.text === 'string') {
+      return { type: 'text', text: part.text };
+    }
+    if (part?.type === 'image_url' && typeof part.image_url?.url === 'string') {
+      return { type: 'image_url', image_url: { url: part.image_url.url } };
+    }
+    throw new Error('model user content contains an unsupported part');
+  });
 }
 
 export function resolveRequestTimeout(config, streamResponses) {

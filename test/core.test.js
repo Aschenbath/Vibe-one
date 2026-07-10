@@ -12,6 +12,7 @@ import { describeFailure, gatherSource } from '../src/core/fixer.js';
 import { exitCodeForStatus } from '../src/cli/status.js';
 import { createRunContext } from '../src/core/runContext.js';
 import { loadConfig } from '../src/core/config.js';
+import { PLANNER_SYSTEM, createPlannerUserContent } from '../src/core/planner.js';
 import {
   REFERENCE_LIMITS,
   normalizeReferencePayloads,
@@ -78,6 +79,102 @@ test('extractJson tolerates markdown fences', () => {
   assert.deepEqual(extractJson('```json\n{"a":1}\n```'), { a: 1 });
   assert.deepEqual(extractJson('{"a":1}'), { a: 1 });
   assert.throws(() => extractJson('not json'));
+});
+
+test('provider preserves OpenAI-compatible multimodal user content', async (t) => {
+  let requestBody;
+  t.mock.method(globalThis, 'fetch', async (_url, options) => {
+    requestBody = JSON.parse(options.body);
+    return new Response(
+      JSON.stringify({ choices: [{ message: { content: '{}' } }] }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    );
+  });
+  const provider = createProvider({
+    model: 'vision-model',
+    baseUrl: 'http://local/v1',
+    apiKey: 'x',
+    temperature: 0,
+    streamResponses: false,
+    maxNetworkRetries: 0,
+  });
+  const content = [
+    { type: 'text', text: 'Clone this UI' },
+    { type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' } },
+  ];
+
+  await provider.chatJson({ system: 'system', user: content });
+
+  assert.deepEqual(requestBody.messages[1].content, content);
+});
+
+test('provider rejects unsupported multimodal parts before sending a request', async (t) => {
+  let calls = 0;
+  t.mock.method(globalThis, 'fetch', async () => {
+    calls += 1;
+    return new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  });
+  const provider = createProvider({
+    model: 'vision-model',
+    baseUrl: 'http://local/v1',
+    apiKey: 'x',
+    temperature: 0,
+    streamResponses: false,
+    maxNetworkRetries: 0,
+  });
+
+  await assert.rejects(
+    provider.chat({ user: [{ type: 'input_image', image_url: { url: 'data:image/png;base64,AAAA' } }] }),
+    /unsupported part/,
+  );
+  assert.equal(calls, 0);
+});
+
+test('provider returns a coded error when the upstream rejects visual content', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () => new Response(
+    'image content is not supported by this model',
+    { status: 415 },
+  ));
+  const provider = createProvider({
+    model: 'text-only-model',
+    baseUrl: 'http://local/v1',
+    apiKey: 'x',
+    temperature: 0,
+    streamResponses: false,
+    maxNetworkRetries: 0,
+  });
+
+  await assert.rejects(
+    provider.chat({
+      user: [
+        { type: 'text', text: 'Clone this UI' },
+        { type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' } },
+      ],
+    }),
+    (error) => error.code === 'VISION_UNSUPPORTED',
+  );
+});
+
+test('planner content includes reference images and visual schema instructions', () => {
+  const content = createPlannerUserContent({
+    brief: '做一个记账产品',
+    references: [{
+      name: 'home.png',
+      type: 'image/png',
+      width: 390,
+      height: 844,
+      buffer: ONE_PIXEL_PNG,
+    }],
+  });
+
+  assert.equal(content[0].type, 'text');
+  assert.match(content[0].text, /home\.png.*390x844/s);
+  assert.match(content[1].image_url.url, /^data:image\/png;base64,/);
+  assert.match(PLANNER_SYSTEM, /visualDesign/);
+  assert.match(PLANNER_SYSTEM, /referenceImage/);
 });
 
 test('provider retries transient gateway failures', async (t) => {

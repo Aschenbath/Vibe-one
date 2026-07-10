@@ -1,12 +1,15 @@
 // Planner: brief -> structured spec + plan artifacts.
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { referenceContentPart } from './referenceImages.js';
 
-const SYSTEM = `You are the planner of a bounded app-replication pipeline.
+export const PLANNER_SYSTEM = `You are the planner of a bounded app-replication pipeline.
 Given a product brief, output STRICT JSON with keys:
   summary: string
-  pages: [{ name, route, purpose, mustContain: [string] }]
+  visualDesign: { layout: string, palette: [string], typography: string, spacing: string, components: [string], responsive: string }
+  pages: [{ name, route, purpose, mustContain: [string], referenceImage: string|null }]
       // mustContain: 2-4 short visible text fragments that MUST appear on that page (labels, headings, seeded values)
+      // referenceImage: exact uploaded reference file name mapped to this page, or null when no image applies
   components: [{ name, usedBy }]
   dataModel: [{ entity, fields: [string] }]
   interactions: [string]
@@ -18,9 +21,29 @@ Given a product brief, output STRICT JSON with keys:
 Keep the app small: mock data only, no backend, no auth. Do not invent features beyond the brief.
 Every mustContain fragment and every scenario.expectText must be something a correct implementation of THIS brief will actually render.`;
 
+export function createPlannerUserContent(config) {
+  const references = config.references ?? [];
+  if (!references.length) return config.brief;
+  const text = [
+    'Product brief:',
+    config.brief || '(no text brief; infer the product from the reference images)',
+    '',
+    'Reference images:',
+    ...references.map(
+      (reference, index) => `${index + 1}. ${reference.name} (${reference.width}x${reference.height}, ${reference.type})`,
+    ),
+    '',
+    'Map each image to the closest planned page using pages[].referenceImage. Use null when a page has no reference.',
+  ].join('\n');
+  return [{ type: 'text', text }, ...references.map(referenceContentPart)];
+}
+
 export async function plan(ctx, provider, config) {
   await ctx.logEvent('plan:start', { summary: 'generating spec from brief' });
-  const { json: spec, usage } = await provider.chatJson({ system: SYSTEM, user: config.brief });
+  const { json: spec, usage } = await provider.chatJson({
+    system: PLANNER_SYSTEM,
+    user: createPlannerUserContent(config),
+  });
   ctx.addUsage(usage);
 
   const specMd = renderSpec(spec);
@@ -37,9 +60,17 @@ function renderSpec(spec) {
   const lines = [
     '# Generated Spec', '',
     `## Summary`, '', spec.summary ?? '(none)', '',
+    '## Visual Design', '',
+    `- Layout: ${spec.visualDesign?.layout ?? '(not specified)'}`,
+    `- Palette: ${(spec.visualDesign?.palette ?? []).join(', ') || '(not specified)'}`,
+    `- Typography: ${spec.visualDesign?.typography ?? '(not specified)'}`,
+    `- Spacing: ${spec.visualDesign?.spacing ?? '(not specified)'}`,
+    `- Components: ${(spec.visualDesign?.components ?? []).join(', ') || '(not specified)'}`,
+    `- Responsive: ${spec.visualDesign?.responsive ?? '(not specified)'}`, '',
     '## Pages', '',
     ...(spec.pages ?? []).flatMap((p) => [
       `- **${p.name}** \`${p.route}\` - ${p.purpose}`,
+      `  - reference image: ${p.referenceImage ? `\`${p.referenceImage}\`` : '(none)'}`,
       ...(p.mustContain ?? []).map((t) => `  - must contain: \`${t}\``),
     ]), '',
     '## Components', '',
@@ -65,7 +96,13 @@ function renderPlan(spec, config) {
     `- Viewport: ${config.viewport.width}x${config.viewport.height}`,
     `- Max repair rounds: ${config.maxRepairRounds}`,
     `- Pages to build: ${(spec.pages ?? []).map((p) => p.name).join(', ')}`,
+    `- Reference images: ${(config.references ?? []).map((reference) => reference.name).join(', ') || '(none)'}`,
+    `- Visual direction: ${spec.visualDesign?.layout ?? '(not specified)'}; ${(spec.visualDesign?.palette ?? []).join(', ') || '(no palette)'}`,
     '',
+    '## Reference mapping', '',
+    ...(spec.pages ?? []).map(
+      (page) => `- **${page.name}**: ${page.referenceImage ? `\`${page.referenceImage}\`` : '(none)'}`,
+    ), '',
     '## Verification plan', '',
     '1. `npm install --ignore-scripts`',
     '2. `npm run build`',
