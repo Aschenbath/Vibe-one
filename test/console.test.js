@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createJobManager } from '../src/console/jobManager.js';
+import { createRunStore } from '../src/console/runStore.js';
 
 test('session status exposes key presence but never the key', () => {
   const manager = createJobManager({ runsRoot: path.join(os.tmpdir(), 'vibe-console-status'), pipeline: async () => {} });
@@ -45,6 +46,38 @@ test('a job streams stages and rejects concurrent starts', async () => {
   assert.equal(finished.stage, 'success');
   assert.equal(finished.events[0].type, 'plan:start');
   assert.equal(JSON.stringify(finished).includes('secret'), false);
+
+  await fs.rm(root, { recursive: true, force: true });
+});
+
+test('run store reconstructs evidence and rejects traversal', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-run-store-'));
+  const runDir = path.join(root, 'demo-2026-07-10T12-00-00');
+  await fs.mkdir(path.join(runDir, 'logs'), { recursive: true });
+  await fs.mkdir(path.join(runDir, 'screenshots'), { recursive: true });
+  await fs.mkdir(path.join(runDir, 'app'), { recursive: true });
+  await fs.writeFile(
+    path.join(runDir, 'logs', 'events.jsonl'),
+    '{"ts":"2026-07-10T12:00:00Z","type":"fix:applied","summary":"repair round 1"}\n',
+  );
+  await fs.writeFile(
+    path.join(runDir, 'DELIVERY_REPORT.md'),
+    '# Delivery Report\n- Status: **success**\n- Model: demo @ local\n',
+  );
+  await fs.writeFile(path.join(runDir, 'screenshots', 'home.png'), 'png');
+
+  const store = createRunStore(root);
+  const [summary] = await store.listRuns();
+  const detail = await store.getRun(summary.id);
+
+  assert.equal(summary.id, path.basename(runDir));
+  assert.equal(summary.status, 'success');
+  assert.equal(summary.repairCount, 1);
+  assert.equal(summary.previewEligible, true);
+  assert.deepEqual(detail.screenshots, ['home.png']);
+  assert.equal(Object.hasOwn(detail, 'runDir'), false);
+  assert.equal((await store.getPreviewTarget(summary.id)).appDir, path.join(runDir, 'app'));
+  await assert.rejects(store.readScreenshot(summary.id, '../DELIVERY_REPORT.md'), /outside/i);
 
   await fs.rm(root, { recursive: true, force: true });
 });
