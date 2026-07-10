@@ -3,10 +3,32 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { loadConfig } from '../src/core/config.js';
 import { createJobManager } from '../src/console/jobManager.js';
 import { createRunStore } from '../src/console/runStore.js';
 import { createPreviewManager } from '../src/console/previewManager.js';
 import { createConsoleServer } from '../src/console/server.js';
+
+const ONE_PIXEL_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+  'base64',
+);
+
+function createLargeSyntheticPng(bytes = 1_100_000) {
+  const buffer = Buffer.alloc(bytes);
+  ONE_PIXEL_PNG.copy(buffer, 0, 0, 24);
+  return buffer;
+}
+
+async function waitForTerminalJob(baseUrl, id) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const response = await fetch(`${baseUrl}api/jobs/${encodeURIComponent(id)}`);
+    const job = await response.json();
+    if (job.terminal) return job;
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  throw new Error(`job did not reach a terminal state: ${id}`);
+}
 
 test('session status exposes key presence but never the key', () => {
   const manager = createJobManager({ runsRoot: path.join(os.tmpdir(), 'vibe-console-status'), pipeline: async () => {} });
@@ -53,6 +75,52 @@ test('a job streams stages and rejects concurrent starts', async () => {
   assert.match(path.basename(pipelineTargetDir), /^demo-[a-f0-9]{8}$/);
 
   await fs.rm(root, { recursive: true, force: true });
+});
+
+test('a screenshot-only job persists references without exposing base64, paths, or secrets', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-reference-'));
+  let loaded;
+  const manager = createJobManager({
+    runsRoot: root,
+    env: { VIBE_ONE_API_KEY: 'secret-key' },
+    load: async (targetDir, overrides) => {
+      loaded = await loadConfig(targetDir, overrides);
+      return { ...loaded, model: 'stub', baseUrl: 'local' };
+    },
+    pipeline: async ({ config }) => ({
+      runId: 'run-1',
+      runDir: path.join(root, 'run-1'),
+      status: config.references.length ? 'planned' : 'failed',
+    }),
+  });
+  const payload = {
+    name: 'home.png',
+    type: 'image/png',
+    width: 1,
+    height: 1,
+    base64: ONE_PIXEL_PNG.toString('base64'),
+  };
+
+  try {
+    const job = await manager.startJob({
+      title: 'Screenshot clone',
+      brief: '',
+      references: [payload],
+      mode: 'plan',
+    });
+    await manager.waitForJob(job.id);
+    const publicJob = manager.getJob(job.id);
+    const serialized = JSON.stringify(publicJob);
+
+    assert.equal(publicJob.referenceCount, 1);
+    assert.deepEqual(publicJob.references, ['home.png']);
+    assert.equal(publicJob.inputMode, 'images');
+    assert.doesNotMatch(serialized, /secret-key|iVBOR|vibe-console-reference-/);
+    assert.equal(loaded.references.length, 1);
+    assert.equal(loaded.references[0].name, 'home.png');
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
 });
 
 test('run store reconstructs evidence and rejects traversal', async () => {
@@ -129,11 +197,62 @@ test('HTTP API configures a session and starts a job without exposing the key', 
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ title: 'Demo', brief: '# Demo', mode: 'plan' }),
   });
+  const jobBody = await jobResponse.text();
+  const job = JSON.parse(jobBody);
   assert.equal(jobResponse.status, 202);
-  assert.equal((await jobResponse.text()).includes('http-secret'), false);
+  assert.equal(jobBody.includes('http-secret'), false);
+  await waitForTerminalJob(address.url, job.id);
 
   await app.close();
   await fs.rm(root, { recursive: true, force: true });
+});
+
+test('HTTP job creation accepts screenshot-only payloads above the default JSON limit safely', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-http-reference-'));
+  const pipeline = async ({ config }) => ({
+    runId: 'run-reference',
+    runDir: path.join(root, 'runs', 'run-reference'),
+    status: config.references.length ? 'planned' : 'failed',
+  });
+  const app = createConsoleServer({ runsRoot: path.join(root, 'runs'), pipeline, env: {} });
+  const address = await app.listen(0);
+  const image = createLargeSyntheticPng();
+
+  try {
+    await fetch(`${address.url}api/session/config`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ apiKey: 'http-reference-secret' }),
+    });
+    const response = await fetch(`${address.url}api/jobs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        title: 'Screenshot only',
+        brief: '',
+        mode: 'plan',
+        references: [{
+          name: 'home.png',
+          type: 'image/png',
+          width: 1,
+          height: 1,
+          base64: image.toString('base64'),
+        }],
+      }),
+    });
+    const body = await response.text();
+    const job = JSON.parse(body);
+
+    assert.equal(response.status, 202);
+    assert.deepEqual(job.references, ['home.png']);
+    assert.equal(job.referenceCount, 1);
+    assert.equal(job.inputMode, 'images');
+    assert.doesNotMatch(body, /http-reference-secret|iVBOR|vibe-console-http-reference-/);
+    await waitForTerminalJob(address.url, job.id);
+  } finally {
+    await app.close();
+    await fs.rm(root, { recursive: true, force: true });
+  }
 });
 
 test('HTTP API returns structured validation errors', async () => {
@@ -149,7 +268,7 @@ test('HTTP API returns structured validation errors', async () => {
 
   assert.equal(response.status, 422);
   assert.deepEqual(await response.json(), {
-    error: { code: 'BRIEF_REQUIRED', message: 'Describe the app before starting.' },
+    error: { code: 'INPUT_REQUIRED', message: '请填写需求描述或上传至少一张参考图。' },
   });
 
   await app.close();

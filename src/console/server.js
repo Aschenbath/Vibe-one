@@ -10,6 +10,7 @@ import { ConsoleError } from './errors.js';
 import { readJson, sendBuffer, sendError, sendJson, sendText } from './http.js';
 
 const STATIC_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
+const JOB_BODY_LIMIT = 26 * 1024 * 1024;
 const STATIC_FILES = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
   ['/index.html', ['index.html', 'text/html; charset=utf-8']],
@@ -47,7 +48,11 @@ export function createConsoleServer({
       return sendJson(res, 200, { jobs: await listJobs() });
     }
     if (pathname === '/api/jobs' && req.method === 'POST') {
-      return sendJson(res, 202, await jobs.startJob(await readJson(req)));
+      return sendJson(
+        res,
+        202,
+        await jobs.startJob(await readJson(req, { maxBytes: JOB_BODY_LIMIT })),
+      );
     }
 
     const match = pathname.match(/^\/api\/jobs\/([^/]+)(?:\/(events|report|preview|screenshots)(?:\/(.+))?)?$/);
