@@ -18,7 +18,7 @@ const DEFAULTS = {
   streamRequestTimeoutMs: Number(process.env.VIBE_ONE_STREAM_TIMEOUT_MS) || 600_000,
 };
 
-export async function loadConfig(targetDir) {
+export async function loadConfig(targetDir, overrides = {}) {
   const inputDir = path.join(targetDir, 'input');
   const briefPath = path.join(inputDir, 'brief.md');
 
@@ -36,7 +36,7 @@ export async function loadConfig(targetDir) {
     // constraints.json is optional
   }
 
-  const apiKey = process.env.VIBE_ONE_API_KEY;
+  const apiKey = overrides.apiKey || process.env.VIBE_ONE_API_KEY;
   if (!apiKey) {
     throw new Error('VIBE_ONE_API_KEY is not set (see .env.example)');
   }

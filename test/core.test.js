@@ -10,6 +10,8 @@ import { createProvider, extractJson, resolveRequestTimeout } from '../src/provi
 import { review } from '../src/core/reviewer.js';
 import { describeFailure, gatherSource } from '../src/core/fixer.js';
 import { exitCodeForStatus } from '../src/cli/status.js';
+import { createRunContext } from '../src/core/runContext.js';
+import { loadConfig } from '../src/core/config.js';
 
 const APP = path.resolve('/tmp/run/app');
 
@@ -232,4 +234,33 @@ test('gatherSource collects app source and skips scaffold + node_modules', async
   assert.doesNotMatch(out, /node_modules/); // deps excluded
 
   await fs.rm(dir, { recursive: true, force: true });
+});
+
+test('run context mirrors persisted events to an optional listener', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-events-'));
+  const seen = [];
+  const ctx = await createRunContext(path.join(root, 'target'), {
+    runsRoot: path.join(root, 'runs'),
+    onEvent: (event) => seen.push(event),
+  });
+
+  await ctx.logEvent('plan:start', { summary: 'planning' });
+
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].type, 'plan:start');
+  const persisted = await fs.readFile(path.join(ctx.logsDir, 'events.jsonl'), 'utf8');
+  assert.match(persisted, /"type":"plan:start"/);
+  await fs.rm(root, { recursive: true, force: true });
+});
+
+test('loadConfig accepts an in-memory API key without persisting it', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-config-'));
+  await fs.mkdir(path.join(root, 'input'), { recursive: true });
+  await fs.writeFile(path.join(root, 'input', 'brief.md'), '# Demo');
+
+  const config = await loadConfig(root, { apiKey: 'session-secret' });
+
+  assert.equal(config.apiKey, 'session-secret');
+  assert.doesNotMatch(await fs.readFile(path.join(root, 'input', 'brief.md'), 'utf8'), /session-secret/);
+  await fs.rm(root, { recursive: true, force: true });
 });

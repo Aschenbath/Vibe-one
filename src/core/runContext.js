@@ -34,6 +34,7 @@ export async function createRunContext(targetDir, config = {}) {
     const event = { ts: new Date().toISOString(), type, ...data };
     events.push(event);
     await fs.appendFile(eventLogPath, JSON.stringify(event) + '\n', 'utf8');
+    config.onEvent?.(event);
     console.log(`[${type}]`, data.summary ?? '');
   }
 
