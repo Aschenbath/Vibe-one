@@ -100,7 +100,9 @@ function createStubProvider() {
 }
 
 test('full pipeline succeeds end-to-end with a stub model (no API)', { skip: !ENABLED, timeout: 300_000 }, async () => {
-  const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-one-e2e-'));
+  // Canonicalize Windows 8.3 temp aliases (for example ASCHEN~1). Vite/Rollup
+  // otherwise sees the long and short spellings as different roots.
+  const tmpRoot = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-one-e2e-')));
   const targetDir = path.join(tmpRoot, 'target');
   await fs.mkdir(path.join(targetDir, 'input'), { recursive: true });
   await fs.writeFile(path.join(targetDir, 'input', 'brief.md'), '# Expenses\nList expenses with a total and an Add button.\n');
