@@ -199,6 +199,7 @@ test('browser console submits a reference image and renders live evidence', { sk
     assert.equal(bodyText.includes('stub-secret'), false);
     assert.equal(bodyText.includes('iVBOR'), false);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+    await page.locator('#run-started').evaluate((element) => { element.textContent = '7月11日 16:00'; });
     await page.screenshot({ path: path.join(artifacts, 'console-desktop.png'), fullPage: true });
 
     const mobile = await browser.newPage({ viewport: { width: 390, height: 844 } });
@@ -212,6 +213,7 @@ test('browser console submits a reference image and renders live evidence', { sk
     await mobile.getByRole('button', { name: '收起历史' }).click();
     await mobile.getByRole('button', { name: '启动预览' }).click();
     await mobile.frameLocator('#preview-frame').getByText('生成产品预览').waitFor();
+    await mobile.locator('#run-started').evaluate((element) => { element.textContent = '7月11日 16:00'; });
     await mobile.screenshot({ path: path.join(artifacts, 'console-mobile.png'), fullPage: true });
   } finally {
     await browser.close();
