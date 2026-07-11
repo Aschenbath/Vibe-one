@@ -1,9 +1,18 @@
 export function createReferenceInputController({ input, trigger, dropzone, list, onChange, showError }) {
   const accepted = new Set(['image/png', 'image/jpeg', 'image/webp']);
   const files = [];
+  let generation = 0;
+  let pending = Promise.resolve();
 
-  async function add(nextFiles) {
+  function add(nextFiles) {
     const incoming = [...nextFiles];
+    const token = generation;
+    pending = pending.then(() => addFiles(incoming, token));
+    return pending;
+  }
+
+  async function addFiles(incoming, token) {
+    if (token !== generation) return;
     if (files.length + incoming.length > 4) {
       showError('最多上传 4 张参考图。');
       return;
@@ -17,9 +26,17 @@ export function createReferenceInputController({ input, trigger, dropzone, list,
         showError(`${file.name} 超过 6 MiB。`);
         continue;
       }
-      const dimensions = await readDimensions(file);
+      let dimensions;
+      try {
+        dimensions = await readDimensions(file);
+      } catch {
+        if (token === generation) showError(`无法读取图片：${file.name}`);
+        continue;
+      }
+      if (token !== generation) return;
       files.push({ file, ...dimensions, objectUrl: URL.createObjectURL(file) });
     }
+    if (token !== generation) return;
     render();
     onChange(files.length);
   }
@@ -49,6 +66,7 @@ export function createReferenceInputController({ input, trigger, dropzone, list,
   }
 
   function clear() {
+    generation += 1;
     for (const item of files) URL.revokeObjectURL(item.objectUrl);
     files.splice(0);
     render();
@@ -76,8 +94,11 @@ export function createReferenceInputController({ input, trigger, dropzone, list,
 
   trigger.addEventListener('click', () => input.click());
   input.addEventListener('change', async () => {
-    await add(input.files);
-    input.value = '';
+    try {
+      await add(input.files);
+    } finally {
+      input.value = '';
+    }
   });
   for (const type of ['dragenter', 'dragover']) {
     dropzone.addEventListener(type, (event) => {
@@ -99,7 +120,15 @@ export function createReferenceInputController({ input, trigger, dropzone, list,
     }
   });
 
-  return { add, remove, move, payload, clear, count: () => files.length };
+  return {
+    add,
+    remove,
+    move,
+    payload,
+    clear,
+    ready: () => pending,
+    count: () => files.length,
+  };
 }
 
 function button(label, onClick) {

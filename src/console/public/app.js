@@ -136,6 +136,7 @@ async function launchJob() {
   setFormBusy(true);
   try {
     await saveSession();
+    await referenceInput.ready();
     const job = await api('/api/jobs', {
       method: 'POST',
       body: JSON.stringify({

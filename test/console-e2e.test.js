@@ -130,6 +130,103 @@ test('browser console submits a reference image and renders live evidence', { sk
   }
 });
 
+test('browser reference input serializes pending work before submit and clear', { skip: !ENABLED, timeout: 60_000 }, async () => {
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-reference-race-')));
+  const runsRoot = path.join(root, 'runs');
+  let submittedReferences = [];
+  const pipeline = async ({ config }) => {
+    submittedReferences = config.references;
+    return {
+      runId: 'reference-race-run',
+      runDir: path.join(runsRoot, 'reference-race-run'),
+      status: 'planned',
+    };
+  };
+  const app = createConsoleServer({ runsRoot, pipeline, env: {} });
+  const address = await app.listen(0);
+  const browser = await chromium.launch();
+
+  try {
+    const page = await browser.newPage();
+    await page.addInitScript(() => {
+      window.Image = class {
+        naturalWidth = 1;
+        naturalHeight = 1;
+        set src(_value) {
+          setTimeout(() => this.onload?.(), 120);
+        }
+      };
+    });
+    await page.goto(address.url);
+
+    await page.evaluate(({ base64 }) => {
+      const bytes = Uint8Array.from(atob(base64), (value) => value.charCodeAt(0));
+      const input = document.querySelector('#reference-input');
+      const dispatch = (names) => {
+        const transfer = new DataTransfer();
+        for (const name of names) transfer.items.add(new File([bytes], name, { type: 'image/png' }));
+        input.files = transfer.files;
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+      };
+      dispatch(['one.png', 'two.png', 'three.png']);
+      dispatch(['four.png', 'five.png', 'six.png']);
+    }, { base64: ONE_PIXEL_PNG.toString('base64') });
+    await page.waitForTimeout(500);
+    const overlappingCount = await page.locator('#reference-list li').count();
+    const overlappingMessage = await page.locator('#form-message').innerText();
+
+    await page.locator('#new-run').evaluate((button) => button.click());
+    await dispatchReferenceFiles(page, ['stale.png']);
+    await page.locator('#new-run').evaluate((button) => button.click());
+    await page.waitForTimeout(250);
+    const staleCount = await page.locator('#reference-list li').count();
+
+    await page.getByRole('button', { name: '运行设置' }).click();
+    await page.getByLabel('会话 API Key').fill('race-secret');
+    await page.getByRole('button', { name: '完成' }).click();
+    await dispatchReferenceFiles(page, ['submit.png']);
+    await page.locator('#run-form').evaluate((form) => form.requestSubmit());
+    await page.waitForTimeout(600);
+
+    assert.equal(overlappingCount, 3);
+    assert.match(overlappingMessage, /最多上传 4 张参考图/);
+    assert.equal(staleCount, 0);
+    assert.deepEqual(submittedReferences.map((item) => item.name), ['submit.png']);
+  } finally {
+    await browser.close();
+    await app.close();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('browser reference input reports corrupt images and resets the picker', { skip: !ENABLED, timeout: 60_000 }, async () => {
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-reference-corrupt-')));
+  const app = createConsoleServer({ runsRoot: path.join(root, 'runs'), env: {} });
+  const address = await app.listen(0);
+  const browser = await chromium.launch();
+
+  try {
+    const page = await browser.newPage();
+    const pageErrors = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
+    await page.goto(address.url);
+    await page.setInputFiles('#reference-input', {
+      name: 'broken.png',
+      mimeType: 'image/png',
+      buffer: Buffer.from('not a png'),
+    });
+    await page.waitForTimeout(250);
+
+    assert.equal(await page.locator('#form-message').innerText(), '无法读取图片：broken.png');
+    assert.equal(await page.locator('#reference-input').inputValue(), '');
+    assert.deepEqual(pageErrors, []);
+  } finally {
+    await browser.close();
+    await app.close();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test('browser console does not expose unknown server copy', { skip: !ENABLED, timeout: 60_000 }, async () => {
   const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-copy-safety-')));
   const runsRoot = path.join(root, 'runs');
@@ -198,3 +295,14 @@ test('console browser test is opt-in', () => {
   assert.ok(true);
   if (!ENABLED) console.log('  (console e2e skipped; run npm run test:console:e2e to enable it)');
 });
+
+async function dispatchReferenceFiles(page, names) {
+  await page.evaluate(({ base64, names: fileNames }) => {
+    const bytes = Uint8Array.from(atob(base64), (value) => value.charCodeAt(0));
+    const transfer = new DataTransfer();
+    for (const name of fileNames) transfer.items.add(new File([bytes], name, { type: 'image/png' }));
+    const input = document.querySelector('#reference-input');
+    input.files = transfer.files;
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  }, { base64: ONE_PIXEL_PNG.toString('base64'), names });
+}
