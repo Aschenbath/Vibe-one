@@ -73,22 +73,24 @@ test('browser console submits a brief and renders live evidence', { skip: !ENABL
   try {
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     await page.goto(address.url);
-    await page.getByLabel('API key').fill('stub-secret');
-    await page.getByLabel('App brief').fill('Build a compact expense tracker.');
-    await page.getByRole('button', { name: 'Launch run' }).click();
-    await page.locator('#active-status').filter({ hasText: 'success' }).waitFor();
-    assert.match(await page.locator('#event-log').innerText(), /planning from brief/i);
+    await page.getByRole('button', { name: '运行设置' }).click({ timeout: 1_000 });
+    await page.getByLabel('会话 API Key').fill('stub-secret');
+    await page.getByRole('button', { name: '完成' }).click();
+    await page.getByLabel('需求描述').fill('生成一个简洁的支出追踪产品。');
+    await page.getByRole('button', { name: '开始生成' }).click();
+    await page.locator('#active-status').filter({ hasText: '交付完成' }).waitFor();
+    assert.match(await page.locator('#event-log').innerText(), /正在理解需求与参考图/);
     assert.equal(
       await page.locator('[data-stage="repairing"]').evaluate((element) => element.classList.contains('done')),
       false,
     );
 
-    await page.getByRole('tab', { name: /Shots/ }).click();
+    await page.getByRole('tab', { name: '结果截图' }).click();
     await page.locator('#screenshots-grid img').waitFor();
-    await page.getByRole('tab', { name: 'Report' }).click();
+    await page.getByRole('tab', { name: '交付报告' }).click();
     await page.locator('#report-content').filter({ hasText: 'Delivery Report' }).waitFor();
-    await page.getByRole('tab', { name: 'Preview' }).click();
-    await page.getByRole('button', { name: 'Launch preview' }).click();
+    await page.getByRole('tab', { name: '实时预览' }).click();
+    await page.getByRole('button', { name: '启动预览' }).click();
     await page.frameLocator('#preview-frame').getByText('Generated preview').waitFor();
 
     assert.equal((await page.locator('body').innerText()).includes('stub-secret'), false);
@@ -97,11 +99,12 @@ test('browser console submits a brief and renders live evidence', { skip: !ENABL
 
     const mobile = await browser.newPage({ viewport: { width: 390, height: 844 } });
     await mobile.goto(address.url);
+    await mobile.getByRole('button', { name: '展开历史' }).click();
     await mobile.locator('#run-history .history-item').first().click();
-    await mobile.locator('#run-monitor').waitFor();
+    await mobile.locator('#flow-workspace').waitFor();
     assert.equal(await mobile.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
     assert.equal(await mobile.locator('#new-run').isVisible(), true);
-    assert.equal(await mobile.getByRole('tab', { name: /Preview/ }).isVisible(), true);
+    assert.equal(await mobile.getByRole('tab', { name: '实时预览' }).isVisible(), true);
     await mobile.screenshot({ path: path.join(artifacts, 'console-mobile.png'), fullPage: true });
   } finally {
     await browser.close();

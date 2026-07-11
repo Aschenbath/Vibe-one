@@ -427,12 +427,60 @@ test('console page exposes the complete operational workflow', async () => {
   const html = await response.text();
 
   assert.equal(response.status, 200);
+  assert.match(html, /<html lang="zh-CN">/);
+  assert.match(html, /你想做什么产品？/);
+  assert.match(html, /参考截图/);
+  assert.match(html, /开始生成/);
+  assert.match(html, /运行设置/);
+  assert.match(html, /理解需求/);
+  assert.match(html, /视觉校验/);
+  assert.match(html, /交付证据/);
   assert.match(html, /id="brief"/);
   assert.match(html, /id="launch-run"/);
   assert.match(html, /id="run-history"/);
   assert.match(html, /id="event-log"/);
-  assert.match(html, /id="evidence-pane"/);
   assert.match(html, /id="preview-frame"/);
+  assert.match(html, /id="history-drawer"/);
+  assert.match(html, /id="reference-input"/);
+  assert.match(html, /id="reference-list"/);
+  assert.match(html, /id="settings-drawer"/);
+  assert.match(html, /id="flow-workspace"/);
+  assert.match(html, /id="visual-comparisons"/);
+  assert.match(html, /<aside[^>]*id="history-drawer"[^>]*class="history-drawer"[^>]*aria-label="生成历史"/);
+  assert.match(html, /<button[^>]*id="history-toggle"[^>]*aria-expanded="false"[^>]*aria-controls="history-panel"[^>]*>展开历史<\/button>/);
+  assert.match(html, /<nav[^>]*id="run-history"[^>]*aria-label="历史任务"/);
+  assert.match(html, /<header class="app-header">/);
+  assert.match(html, /<section[^>]*id="focus-workspace"[^>]*class="focus-workspace"/);
+  assert.match(html, /<section[^>]*id="flow-workspace"[^>]*class="flow-workspace"[^>]*hidden/);
+  assert.match(html, /<form[^>]*id="run-form"[^>]*novalidate/);
+  assert.match(html, /<button[^>]*id="reference-trigger"[^>]*aria-controls="reference-input"[^>]*>\s*<strong>添加参考截图<\/strong>\s*<span>PNG、JPEG 或 WebP，最多 4 张<\/span>\s*<\/button>/);
+  assert.match(html, /<ol[^>]*id="reference-list"[^>]*aria-label="参考截图"[^>]*><\/ol>/);
+  assert.match(html, /<ol[^>]*id="stage-track"[^>]*aria-label="生成阶段"/);
+  assert.match(html, /<ol[^>]*id="event-log"[^>]*aria-live="polite"/);
+  assert.match(html, /<div class="flow-grid">/);
+  assert.match(html, /<section class="activity-panel">/);
+  assert.match(html, /<section[^>]*class="evidence-panel"/);
+  assert.match(html, /<fieldset>\s*<legend>执行方式<\/legend>/);
+  assert.match(html, /<input[^>]*id="api-key"[^>]*type="password"[^>]*autocomplete="off"/);
+  assert.match(html, /<div[^>]*id="toast"[^>]*role="status"[^>]*aria-live="polite"[^>]*hidden/);
+  assert.match(html, /<script type="module" src="\/app\.js"><\/script>/);
+  assert.doesNotMatch(html, /Build from a brief|Launch run|Delivery console/);
+
+  const appSource = await fs.readFile(new URL('../src/console/public/app.js', import.meta.url), 'utf8');
+  for (const [, id] of appSource.matchAll(/getElementById\('([^']+)'\)/g)) {
+    assert.match(html, new RegExp(`id=["']${id}["']`), `app.js selector #${id} must exist in index.html`);
+  }
+  for (const [, id] of appSource.matchAll(/querySelector\('#([^']+)'\)/g)) {
+    assert.match(html, new RegExp(`id=["']${id}["']`), `app.js selector #${id} must exist in index.html`);
+  }
+  assert.doesNotMatch(
+    appSource,
+    /Session key cleared|Starting\.\.\.|Restart preview|Launch preview|No Delivery Report|Loading Delivery Report|Model not loaded|Events will appear|Reconnecting|Select a successful|Verified build|This run does not|Preview becomes available|No screenshots|Generated screenshot|No repair attempts|Repair event|Local server online|Local server unavailable/,
+  );
+
+  const copyResponse = await fetch(`${address.url}copy.js`);
+  assert.equal(copyResponse.status, 200);
+  assert.match(await copyResponse.text(), /理解需求/);
 
   await app.close();
   await fs.rm(root, { recursive: true, force: true });

@@ -1,214 +1,150 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="color-scheme" content="light" />
-    <title>Vibe-one Console</title>
-    <link rel="stylesheet" href="/app.css" />
-    <script src="/app.js" defer></script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <title>Vibe-one 产品实验室</title>
+    <link rel="stylesheet" href="/app.css">
   </head>
-  <body>
-    <div class="shell">
-      <aside class="history-rail" aria-label="Run history">
-        <div class="brand-block">
-          <div class="brand-mark" aria-hidden="true"><span>V</span><span>1</span></div>
+  <body data-view="focus">
+    <div class="app-shell">
+      <aside id="history-drawer" class="history-drawer" aria-label="生成历史">
+        <button id="history-toggle" type="button" aria-expanded="false" aria-controls="history-panel">展开历史</button>
+        <div id="history-panel" hidden>
           <div>
-            <p class="brand-name">Vibe-one</p>
-            <p class="brand-caption">Delivery console</p>
+            <strong>Vibe-one</strong>
+            <span>产品实验室</span>
           </div>
+          <button id="new-run" type="button">新建任务</button>
+          <span id="history-count">0</span>
+          <nav id="run-history" aria-label="历史任务"></nav>
+          <footer>
+            <span id="connection-dot" aria-hidden="true"></span>
+            <span id="connection-label">正在连接</span>
+          </footer>
         </div>
-
-        <button class="primary-command full-width" id="new-run" type="button">
-          <span class="command-symbol" aria-hidden="true">+</span>
-          New run
-        </button>
-
-        <div class="rail-section-heading">
-          <span>Run archive</span>
-          <span class="count-badge" id="history-count">0</span>
-        </div>
-        <nav id="run-history" class="history-list" aria-label="Generated app runs">
-          <div class="rail-empty">No runs recorded yet.</div>
-        </nav>
-
-        <footer class="rail-footer">
-          <span class="connection-dot" id="connection-dot" aria-hidden="true"></span>
-          <span id="connection-label">Connecting</span>
-        </footer>
       </aside>
 
-      <main class="workspace">
-        <header class="toolbar workspace-toolbar">
+      <main class="product-lab">
+        <header class="app-header">
           <div>
-            <p class="eyebrow">LOCAL CONTROL PLANE</p>
-            <h1 id="workspace-title">Build from a brief</h1>
+            <span>Vibe-one</span>
+            <strong id="workspace-title">产品实验室</strong>
           </div>
-          <div class="toolbar-status" aria-live="polite">
-            <span class="status-chip neutral" id="active-status">Ready</span>
-            <span class="model-readout" id="model-readout">Model not loaded</span>
+          <div>
+            <span id="model-readout">尚未配置模型</span>
+            <span id="active-status">就绪</span>
+            <button id="settings-trigger" type="button">运行设置</button>
           </div>
         </header>
 
-        <section class="composer" id="composer-pane" aria-labelledby="workspace-title">
+        <section id="focus-workspace" class="focus-workspace">
+          <h1>你想做什么产品？</h1>
+          <p>写下核心需求，也可以上传产品截图作为视觉参考。</p>
           <form id="run-form" novalidate>
-            <div class="brief-header">
-              <label for="brief">App brief</label>
-              <span id="brief-count">0 / 100,000</span>
+            <label for="title">任务名称</label>
+            <input id="title" maxlength="80">
+            <label for="brief">需求描述</label>
+            <span id="brief-count">0 / 100,000</span>
+            <textarea id="brief" maxlength="100000"></textarea>
+            <div id="reference-dropzone">
+              <button id="reference-trigger" type="button" aria-controls="reference-input">
+                <strong>添加参考截图</strong>
+                <span>PNG、JPEG 或 WebP，最多 4 张</span>
+              </button>
             </div>
-            <textarea
-              id="brief"
-              name="brief"
-              maxlength="100000"
-              spellcheck="true"
-              placeholder="Describe the product, pages, interactions, data, and visual direction."
-            >Build a focused mobile expense tracker for freelancers. Include a monthly summary, category breakdown, transaction list, and a fast add-expense flow. Use realistic mock data and make every primary action work.</textarea>
-
-            <div class="form-grid">
-              <label class="field field-wide" for="title">
-                <span>Run title</span>
-                <input id="title" name="title" value="Freelancer expense tracker" maxlength="80" autocomplete="off" />
-              </label>
-
-              <fieldset class="field mode-field">
-                <legend>Execution</legend>
-                <div class="segmented-control">
-                  <label>
-                    <input type="radio" name="mode" value="run" checked />
-                    <span>Full run</span>
-                  </label>
-                  <label>
-                    <input type="radio" name="mode" value="plan" />
-                    <span>Plan only</span>
-                  </label>
-                </div>
-              </fieldset>
-
-              <label class="field" for="base-url">
-                <span>API endpoint</span>
-                <input id="base-url" name="base-url" type="url" autocomplete="url" />
-              </label>
-
-              <label class="field" for="model">
-                <span>Model</span>
-                <input id="model" name="model" autocomplete="off" />
-              </label>
-
-              <label class="field field-key" for="api-key">
-                <span>API key</span>
-                <input id="api-key" name="api-key" type="password" autocomplete="off" placeholder="Session only" />
-                <span class="field-hint" id="key-hint">Not configured</span>
-              </label>
-            </div>
-
-            <div class="form-actions">
-              <p class="form-message" id="form-message" role="alert"></p>
-              <div class="action-group">
-                <button class="quiet-command" id="clear-key" type="button">Clear key</button>
-                <button class="primary-command" id="launch-run" type="submit">
-                  <span class="run-glyph" aria-hidden="true"></span>
-                  Launch run
-                </button>
-              </div>
-            </div>
+            <input id="reference-input" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden>
+            <ol id="reference-list" aria-label="参考截图"></ol>
+            <p id="form-message" role="alert"></p>
+            <button id="launch-run" type="submit">开始生成</button>
           </form>
         </section>
 
-        <section class="run-monitor" id="run-monitor" hidden aria-label="Current run progress">
-          <div class="run-summary-band">
+        <section id="flow-workspace" class="flow-workspace" hidden>
+          <header>
             <div>
-              <p class="eyebrow">ACTIVE DELIVERY</p>
-              <h2 id="run-title">Untitled app</h2>
+              <span>当前任务</span>
+              <h1 id="run-title">未命名产品</h1>
             </div>
-            <dl class="run-metrics">
-              <div><dt>Mode</dt><dd id="run-mode">Full run</dd></div>
-              <div><dt>Started</dt><dd id="run-started">--</dd></div>
-              <div><dt>Repairs</dt><dd id="run-repairs">0</dd></div>
+            <dl>
+              <div><dt>执行方式</dt><dd id="run-mode">完整生成</dd></div>
+              <div><dt>开始时间</dt><dd id="run-started">--</dd></div>
+              <div><dt>修复轮次</dt><dd id="run-repairs">0</dd></div>
             </dl>
-          </div>
-
-          <ol class="stage-track" id="stage-track" aria-label="Pipeline stages">
-            <li data-stage="planning"><span>01</span><strong>Plan</strong><small>Brief to spec</small></li>
-            <li data-stage="building"><span>02</span><strong>Build</strong><small>Generate files</small></li>
-            <li data-stage="verifying"><span>03</span><strong>Verify</strong><small>Build and browse</small></li>
-            <li data-stage="repairing"><span>04</span><strong>Repair</strong><small>Bounded fixes</small></li>
-            <li data-stage="success"><span>05</span><strong>Deliver</strong><small>Evidence ready</small></li>
+          </header>
+          <ol id="stage-track" aria-label="生成阶段">
+            <li data-stage="planning">理解需求</li>
+            <li data-stage="building">生成产品</li>
+            <li data-stage="verifying">构建验证</li>
+            <li data-stage="visual">视觉校验</li>
+            <li data-stage="repairing">自动修复</li>
+            <li data-stage="success">交付完成</li>
           </ol>
-
-          <div class="log-section">
-            <div class="section-toolbar">
-              <div>
-                <p class="eyebrow">EVENT STREAM</p>
-                <h3>Pipeline activity</h3>
+          <div class="flow-grid">
+            <section class="activity-panel">
+              <header>
+                <h2>运行动态</h2>
+                <span id="live-label"><span aria-hidden="true"></span> 等待中</span>
+              </header>
+              <ol id="event-log" aria-live="polite"></ol>
+            </section>
+            <section id="evidence-pane" class="evidence-panel">
+              <header>
+                <h2 id="evidence-title">交付证据</h2>
+                <button id="refresh-evidence" type="button">刷新</button>
+              </header>
+              <div class="evidence-tabs" role="tablist" aria-label="证据视图">
+                <button type="button" role="tab" data-tab="preview" aria-selected="true">实时预览</button>
+                <button type="button" role="tab" data-tab="references" aria-selected="false">参考图</button>
+                <button type="button" role="tab" data-tab="screenshots" aria-selected="false">结果截图 <span id="shot-count">0</span></button>
+                <button type="button" role="tab" data-tab="visual" aria-selected="false">视觉比较</button>
+                <button type="button" role="tab" data-tab="report" aria-selected="false">交付报告</button>
+                <button type="button" role="tab" data-tab="repairs" aria-selected="false">修复记录 <span id="repair-count">0</span></button>
               </div>
-              <span class="live-label" id="live-label"><span></span> Waiting</span>
-            </div>
-            <ol id="event-log" class="event-log" aria-live="polite">
-              <li class="log-empty">Events will appear here as the pipeline advances.</li>
-            </ol>
+              <section data-panel="preview">
+                <p id="preview-label"></p>
+                <button id="launch-preview" type="button" disabled>启动预览</button>
+                <div id="preview-empty"></div>
+                <iframe id="preview-frame" title="生成产品预览" hidden></iframe>
+              </section>
+              <section data-panel="references" hidden><div id="reference-evidence"></div></section>
+              <section data-panel="screenshots" hidden><div id="screenshots-grid"></div></section>
+              <section data-panel="visual" hidden><div id="visual-comparisons"></div></section>
+              <section data-panel="report" hidden><pre id="report-content"></pre></section>
+              <section data-panel="repairs" hidden><ol id="repair-list"></ol></section>
+            </section>
           </div>
         </section>
       </main>
 
-      <section class="evidence" id="evidence-pane" aria-label="Run evidence">
-        <header class="toolbar evidence-toolbar">
-          <div>
-            <p class="eyebrow">DELIVERY EVIDENCE</p>
-            <h2 id="evidence-title">No run selected</h2>
-          </div>
-          <button class="quiet-command compact" id="refresh-evidence" type="button">Refresh</button>
-        </header>
-
-        <div class="evidence-tabs" role="tablist" aria-label="Evidence views">
-          <button type="button" role="tab" aria-selected="true" data-tab="preview">Preview</button>
-          <button type="button" role="tab" aria-selected="false" data-tab="screenshots">Shots <span id="shot-count">0</span></button>
-          <button type="button" role="tab" aria-selected="false" data-tab="report">Report</button>
-          <button type="button" role="tab" aria-selected="false" data-tab="repairs">Repairs <span id="repair-count">0</span></button>
-        </div>
-
-        <div class="evidence-body">
-          <section class="evidence-panel active" data-panel="preview" role="tabpanel">
-            <div class="preview-actions">
-              <p id="preview-label">Select a successful full run to launch its app.</p>
-              <button class="primary-command compact" id="launch-preview" type="button" disabled>Launch preview</button>
-            </div>
-            <div class="preview-stage">
-              <div class="preview-empty" id="preview-empty">
-                <div class="preview-blueprint" aria-hidden="true">
-                  <span></span><span></span><span></span>
-                </div>
-                <strong>Generated app preview</strong>
-                <p>The verified Vite build will open here without leaving the console.</p>
-              </div>
-              <iframe id="preview-frame" class="preview-frame" title="Generated app preview" hidden></iframe>
-            </div>
-          </section>
-
-          <section class="evidence-panel" data-panel="screenshots" role="tabpanel" hidden>
-            <div class="screenshots-grid" id="screenshots-grid">
-              <div class="panel-empty">No screenshots are available for this run.</div>
-            </div>
-          </section>
-
-          <section class="evidence-panel" data-panel="report" role="tabpanel" hidden>
-            <pre id="report-content" class="report-content">Select a completed run to read its Delivery Report.</pre>
-          </section>
-
-          <section class="evidence-panel" data-panel="repairs" role="tabpanel" hidden>
-            <ol id="repair-list" class="repair-list">
-              <li class="panel-empty">No repair attempts recorded.</li>
-            </ol>
-          </section>
-        </div>
-      </section>
+      <dialog id="settings-drawer">
+        <form method="dialog">
+          <h2>运行设置</h2>
+          <fieldset>
+            <legend>执行方式</legend>
+            <label><input type="radio" name="mode" value="run" checked>完整生成</label>
+            <label><input type="radio" name="mode" value="plan">仅生成规划</label>
+          </fieldset>
+          <label for="base-url">API endpoint</label>
+          <input id="base-url" type="url">
+          <label for="model">模型</label>
+          <input id="model">
+          <label for="api-key">会话 API Key</label>
+          <input id="api-key" type="password" autocomplete="off">
+          <span id="key-hint"></span>
+          <button id="clear-key" type="button">清除 Key</button>
+          <button value="close">完成</button>
+        </form>
+      </dialog>
     </div>
 
-    <dialog id="image-dialog" class="image-dialog">
-      <form method="dialog"><button aria-label="Close screenshot">Close</button></form>
-      <img id="dialog-image" alt="Generated app screenshot" />
+    <dialog id="image-dialog">
+      <img id="dialog-image" alt="证据截图">
       <p id="dialog-caption"></p>
+      <form method="dialog"><button value="close">关闭</button></form>
     </dialog>
-
-    <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+    <div id="toast" role="status" aria-live="polite" hidden></div>
+    <script type="module" src="/app.js"></script>
   </body>
 </html>
