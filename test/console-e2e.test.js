@@ -114,6 +114,70 @@ test('browser console submits a brief and renders live evidence', { skip: !ENABL
   }
 });
 
+test('browser console does not expose unknown server copy', { skip: !ENABLED, timeout: 60_000 }, async () => {
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-copy-safety-')));
+  const runsRoot = path.join(root, 'runs');
+  const runId = 'unknown-copy-run';
+  const runDir = path.join(runsRoot, runId);
+  await fs.mkdir(path.join(runDir, 'logs'), { recursive: true });
+  await fs.writeFile(
+    path.join(runDir, 'DELIVERY_REPORT.md'),
+    '# Delivery Report\n- Status: **secret-status**\n',
+    'utf8',
+  );
+  await fs.writeFile(
+    path.join(runDir, 'logs', 'events.jsonl'),
+    `${JSON.stringify({
+      ts: new Date().toISOString(),
+      type: 'mystery:event',
+      summary: 'secret English summary',
+    })}\n`,
+    'utf8',
+  );
+
+  const app = createConsoleServer({ runsRoot, env: {} });
+  const address = await app.listen(0);
+  const browser = await chromium.launch();
+
+  try {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await page.goto(address.url);
+    const historyText = await page.locator('#run-history').innerText();
+    assert.match(historyText, /状态待确认/);
+    assert.doesNotMatch(historyText, /secret-status/);
+
+    await page.getByRole('button', { name: '展开历史' }).click();
+    await page.locator('#run-history .history-item').first().click();
+    await page.locator('#event-log').filter({ hasText: '事件已记录' }).waitFor();
+    const eventText = await page.locator('#event-log').innerText();
+    assert.match(eventText, /mystery:event/);
+    assert.doesNotMatch(eventText, /secret English summary/);
+
+    await page.getByRole('button', { name: '新建任务' }).click();
+    await page.getByRole('button', { name: '运行设置' }).click();
+    await page.getByLabel('会话 API Key').fill('copy-safety-key');
+    await page.getByRole('button', { name: '完成' }).click();
+    await page.route('**/api/jobs', async (route) => {
+      if (route.request().method() !== 'POST') return route.continue();
+      await route.fulfill({
+        status: 500,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          error: { code: 'UPSTREAM_SECRET', message: 'secret upstream English' },
+        }),
+      });
+    });
+    await page.getByLabel('需求描述').fill('测试安全错误回退。');
+    await page.getByRole('button', { name: '开始生成' }).click();
+    await page.locator('#form-message').filter({ hasText: '本地工作台暂时无法完成请求，请查看事件记录。' }).waitFor();
+    assert.doesNotMatch(await page.locator('body').innerText(), /secret upstream English|copy-safety-key/);
+  } finally {
+    await browser.close();
+    await app.close();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test('console browser test is opt-in', () => {
   assert.ok(true);
   if (!ENABLED) console.log('  (console e2e skipped; run npm run test:console:e2e to enable it)');

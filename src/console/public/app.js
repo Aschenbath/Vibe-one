@@ -69,7 +69,7 @@ async function api(path, options = {}) {
   const response = await fetch(path, { ...options, headers });
   const contentType = response.headers.get('content-type') || '';
   const body = contentType.includes('application/json') ? await response.json() : await response.text();
-  if (!response.ok) throw new Error(ERROR_COPY[body.error?.code] || body.error?.message || `请求失败 (${response.status})`);
+  if (!response.ok) throw new Error(ERROR_COPY[body.error?.code] || ERROR_COPY.INTERNAL_ERROR);
   return body;
 }
 
@@ -309,7 +309,7 @@ function renderHistory() {
     dot.setAttribute('aria-hidden', 'true');
     const copy = createElement('span', 'history-copy');
     copy.append(createElement('strong', '', job.title || job.id));
-    copy.append(createElement('small', '', `${STATUS_COPY[job.status || job.stage] || job.status || job.stage} / ${formatDate(job.createdAt)}`));
+    copy.append(createElement('small', '', `${STATUS_COPY[job.status || job.stage] || '状态待确认'} / ${formatDate(job.createdAt)}`));
     button.append(dot, copy);
     elements.runHistory.append(button);
   }
@@ -362,7 +362,7 @@ function renderEvents(job) {
       row.append(
         createElement('time', 'event-time', formatTime(event.ts)),
         createElement('span', 'event-type', event.type),
-        createElement('span', 'event-summary', EVENT_COPY[event.type] || event.summary || '事件已记录'),
+        createElement('span', 'event-summary', EVENT_COPY[event.type] || '事件已记录'),
       );
       elements.eventLog.append(row);
     }
@@ -426,7 +426,7 @@ function renderRepairs(job) {
     const item = createElement('li', 'repair-item');
     item.append(
       createElement('time', '', formatDate(event.ts)),
-      createElement('strong', '', EVENT_COPY[event.type] || event.summary || '自动修复事件'),
+      createElement('strong', '', EVENT_COPY[event.type] || '自动修复事件'),
       createElement('code', '', event.type),
     );
     elements.repairList.append(item);
