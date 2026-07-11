@@ -21,12 +21,136 @@ import {
   writeReferencePayloads,
   discoverReferenceImages,
 } from '../src/core/referenceImages.js';
+import { renderProductDesign, validateProductDesign } from '../src/core/productDesign.js';
 
 const APP = path.resolve('/tmp/run/app');
 const ONE_PIXEL_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
   'base64',
 );
+const PRODUCT_DESIGN = {
+  productType: '数据密集型 B2B SaaS',
+  targetUsers: ['客服运营主管', '质检专员'],
+  tone: '现代数据工作台，克制可信、信息优先',
+  density: 'compact',
+  navigation: '左侧主导航配合顶部任务上下文切换',
+  contentStrategy: '先展示异常、趋势与待处理任务，再提供明细下钻',
+  componentLanguage: ['紧凑指标卡', '高密度数据表', '状态标签与行内操作'],
+  responsiveRules: ['桌面端保留三栏工作区', '窄屏折叠侧栏并纵向排列摘要卡'],
+  tokens: {
+    colors: {
+      canvas: '#F4F6F8',
+      surface: '#FFFFFF',
+      text: '#17202A',
+      primary: '#2457D6',
+      success: '#16825D',
+      warning: '#C47A12',
+      danger: '#C53A3A',
+    },
+    typography: {
+      display: '700 32px/1.2 Inter, sans-serif',
+      heading: '650 20px/1.3 Inter, sans-serif',
+      body: '400 14px/1.5 Inter, sans-serif',
+      caption: '500 12px/1.4 Inter, sans-serif',
+    },
+    spacing: ['4px', '8px', '12px', '16px', '24px', '32px'],
+    radii: ['4px', '8px', '12px'],
+  },
+  requiredStates: [
+    { name: 'loading', trigger: '首次加载质量概览时' },
+    { name: 'empty', trigger: '筛选条件没有匹配记录时' },
+    { name: 'success', trigger: '批量质检任务提交完成时' },
+  ],
+};
+
+test('product design validates an executable compact B2B SaaS contract', () => {
+  assert.equal(validateProductDesign(PRODUCT_DESIGN).density, 'compact');
+});
+
+test('product design accepts concise non-empty list labels', () => {
+  const design = validateProductDesign({
+    ...PRODUCT_DESIGN,
+    targetUsers: ['CEO'],
+    componentLanguage: ['表格'],
+    responsiveRules: ['抽屉'],
+  });
+
+  assert.deepEqual(design.targetUsers, ['CEO']);
+  assert.deepEqual(design.componentLanguage, ['表格']);
+  assert.deepEqual(design.responsiveRules, ['抽屉']);
+});
+
+test('product design renders Chinese-first bilingual Markdown', () => {
+  const markdown = renderProductDesign(PRODUCT_DESIGN);
+
+  assert.match(markdown, /产品类型 \/ Product Type/);
+  assert.match(markdown, /客服运营主管/);
+  assert.match(markdown, /现代数据工作台，克制可信、信息优先/);
+  assert.match(markdown, /左侧主导航配合顶部任务上下文切换/);
+  assert.match(markdown, /先展示异常、趋势与待处理任务，再提供明细下钻/);
+  assert.match(markdown, /紧凑指标卡/);
+  assert.match(markdown, /首次加载质量概览时/);
+  assert.match(markdown, /窄屏折叠侧栏并纵向排列摘要卡/);
+});
+
+test('product design rejects generic-only tones after Chinese and English normalization', () => {
+  for (const tone of [
+    '现代、简洁、专业、可信',
+    '现代（简洁）专业—可信',
+    ' modern / clean, professional； trustworthy ',
+    '高级，美观，premium beautiful',
+  ]) {
+    assert.throws(
+      () => validateProductDesign({ ...PRODUCT_DESIGN, tone }),
+      (error) => error.code === 'PRODUCT_DESIGN_INVALID',
+      tone,
+    );
+  }
+
+  assert.equal(
+    validateProductDesign({ ...PRODUCT_DESIGN, tone: '现代、简洁，但以风险会话密度和行内处置为核心' }).tone,
+    '现代、简洁，但以风险会话密度和行内处置为核心',
+  );
+});
+
+test('product design requires at least two distinct valid states', () => {
+  assert.throws(
+    () => validateProductDesign({
+      ...PRODUCT_DESIGN,
+      requiredStates: [
+        { name: 'loading', trigger: '首次加载质量概览时' },
+        { name: 'empty', trigger: '筛选条件没有匹配记录时' },
+        { name: 'loading', trigger: '刷新质量概览时' },
+      ],
+    }),
+    (error) => error.code === 'PRODUCT_DESIGN_INVALID',
+  );
+});
+
+test('product design rejects incomplete lists, states, triggers, and token groups', () => {
+  const invalidCases = [
+    ['empty targetUsers', { targetUsers: [] }],
+    ['blank targetUsers', { targetUsers: [' '] }],
+    ['empty componentLanguage', { componentLanguage: [] }],
+    ['blank componentLanguage', { componentLanguage: [' '] }],
+    ['empty responsiveRules', { responsiveRules: [] }],
+    ['blank responsiveRules', { responsiveRules: [' '] }],
+    ['invalid state', { requiredStates: [{ name: 'idle', trigger: '等待任务开始时' }, PRODUCT_DESIGN.requiredStates[1]] }],
+    ['short trigger', { requiredStates: [{ name: 'loading', trigger: '短' }, PRODUCT_DESIGN.requiredStates[1]] }],
+    ['colors insufficient', { tokens: { ...PRODUCT_DESIGN.tokens, colors: { canvas: '#fff' } } }],
+    ['typography insufficient', { tokens: { ...PRODUCT_DESIGN.tokens, typography: { body: '14px sans-serif' } } }],
+    ['spacing insufficient', { tokens: { ...PRODUCT_DESIGN.tokens, spacing: ['4px'] } }],
+    ['radii insufficient', { tokens: { ...PRODUCT_DESIGN.tokens, radii: ['4px'] } }],
+  ];
+
+  for (const [name, overrides] of invalidCases) {
+    assert.throws(
+      () => validateProductDesign({ ...PRODUCT_DESIGN, ...overrides }),
+      (error) => error.code === 'PRODUCT_DESIGN_INVALID',
+      name,
+    );
+  }
+});
 
 test('package test command is compatible with the Node 20 CI runner', async () => {
   const pkg = JSON.parse(await fs.readFile(new URL('../package.json', import.meta.url), 'utf8'));
