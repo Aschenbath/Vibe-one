@@ -1,6 +1,6 @@
 # Vibe-one Handoff (Fable5 -> Codex)
 
-Status: **completed on 2026-07-10**.
+Status: **Product Lab visual-input phase completed on 2026-07-11**.
 
 The original handoff asked Codex to capture a successful real run, prove a second demo, retain one failed-then-repaired report, and add screenshots to the repository. All four requirements now have committed evidence.
 
@@ -38,4 +38,8 @@ Both runs used `gpt-5.6-sol` through a configured OpenAI-compatible endpoint. Th
 
 ## Remaining boundary
 
-No Phase 1/2 handoff item remains. The next product phase is Phase 3: reference screenshot input and coarse visual comparison. That work is intentionally outside this completed handoff and should preserve the safety and evidence contracts above.
+The local Product Lab now accepts text-only, screenshot-only, and combined input. PNG/JPEG/WebP references are bounded to 4 files, 6 MiB each and 18 MiB total; the console request body is capped at 26 MiB. An OpenAI-compatible multimodal planner produces a structured product/visual spec and page mapping. Generated screenshots then pass through deterministic local SSIM structure and RGB histogram scoring, followed by bounded visual repair when needed. The default `0.62` threshold means coarse visual consistency, not pixel-perfect cloning.
+
+Evidence is available in the Product Lab reference, screenshot, visual-comparison and repair tabs, and on disk under `runs/<id>/input/references/`, `runs/<id>/screenshots/`, `runs/<id>/visual/comparisons.json`, and `runs/<id>/DELIVERY_REPORT.md`.
+
+Credentials remain session-only. Public job data and persisted artifacts do not expose API keys, uploaded base64, or private absolute input paths. Remote hosting/authentication, concurrent jobs, durable credentials, and mid-command cancellation remain outside the local-console boundary.

@@ -108,7 +108,7 @@ test('browser console submits a reference image and renders live evidence', { sk
 
   const previewServer = http.createServer((_req, res) => {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-    res.end('<!doctype html><html><body><main><h1>Generated preview</h1><button>Add expense</button></main></body></html>');
+    res.end('<!doctype html><html><body><main><h1>生成产品预览</h1><button>添加支出</button></main></body></html>');
   });
   await new Promise((resolve) => previewServer.listen(0, '127.0.0.1', resolve));
   const previewAddress = previewServer.address();
@@ -163,6 +163,7 @@ test('browser console submits a reference image and renders live evidence', { sk
     await page.getByRole('button', { name: '运行设置' }).click({ timeout: 1_000 });
     await page.getByLabel('会话 API Key').fill('stub-secret');
     await page.getByRole('button', { name: '完成' }).click();
+    await page.getByLabel('任务名称').fill('自由职业者记账产品');
     await page.setInputFiles('#reference-input', {
       name: 'home.png',
       mimeType: 'image/png',
@@ -191,7 +192,7 @@ test('browser console submits a reference image and renders live evidence', { sk
     await page.locator('#report-content').filter({ hasText: 'Delivery Report' }).waitFor();
     await page.getByRole('tab', { name: '实时预览' }).click();
     await page.getByRole('button', { name: '启动预览' }).click();
-    await page.frameLocator('#preview-frame').getByText('Generated preview').waitFor();
+    await page.frameLocator('#preview-frame').getByText('生成产品预览').waitFor();
 
     const bodyText = await page.locator('body').innerText();
     assert.equal(bodyText.includes('stub-secret'), false);
@@ -207,6 +208,9 @@ test('browser console submits a reference image and renders live evidence', { sk
     assert.equal(await mobile.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
     assert.equal(await mobile.locator('#new-run').isVisible(), true);
     assert.equal(await mobile.getByRole('tab', { name: '实时预览' }).isVisible(), true);
+    await mobile.getByRole('button', { name: '收起历史' }).click();
+    await mobile.getByRole('button', { name: '启动预览' }).click();
+    await mobile.frameLocator('#preview-frame').getByText('生成产品预览').waitFor();
     await mobile.screenshot({ path: path.join(artifacts, 'console-mobile.png'), fullPage: true });
   } finally {
     await browser.close();

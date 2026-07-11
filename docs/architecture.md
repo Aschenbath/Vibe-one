@@ -3,10 +3,10 @@
 ## Data flow
 
 ```text
-input/brief.md + constraints.json
+brief + normalized references + constraints
         |
         v
-   [Planner] --model--> spec JSON --> SPEC.generated.md / PLAN.generated.md
+   [Planner] --multimodal model--> product + visual spec --> SPEC.generated.md / PLAN.generated.md
         |
         v
    [Builder] --model--> delimited file blocks --> runs/<id>/app/   (safeJoin path jail)
@@ -15,11 +15,11 @@ input/brief.md + constraints.json
    [Runner]  npm install -> npm run build -> vite preview -> Playwright screenshots
         |
         v
-   [Reviewer] mechanical checks (exit codes, shot bytes, page text, page count)
+   [Reviewer] mechanical checks + local SSIM/color-histogram visual gate
         |                                   |
         | pass                              | fail (round < maxRepairRounds)
         v                                   v
-   [Reporter]                          [Fixer] --model--> patched files --> back to Runner
+   [Reporter]                  [functional / visual fixer] --model--> patched files --> back to Runner
 ```
 
 ## Module contracts
@@ -28,11 +28,13 @@ input/brief.md + constraints.json
 | --- | --- | --- | --- |
 | `core/config.js` | targetDir | merged config (constraints > env > defaults) | 0 |
 | `providers/openaiCompatible.js` | system + user prompts | streamed or JSON chat result + usage | 1 per request |
-| `core/planner.js` | brief | spec JSON (pages+mustContain, scenarios) + 2 markdown artifacts | 1 |
+| `core/planner.js` | brief + optional references | structured product/visual spec + markdown artifacts | 1 |
 | `core/builder.js` | brief + spec | fixed scaffold (package.json/vite.config) + model files under `app/` | 1 |
 | `runner/commands.js` | appDir | command records + screenshots + page text + scenario results | 0 |
 | `core/reviewer.js` | runner results + spec | `{ pass, checks[], failed[] }` incl. mustContain + scenarios | 0 |
 | `core/fixer.js` | failure evidence | patched files + diagnosis | 1 per round |
+| `runner/visualCompare.js` | mapped reference + generated screenshot | deterministic SSIM structure, color histogram, combined score | 0 |
+| `core/fixer.js` (visual mode) | failed visual evidence + current source | patched files + visual diagnosis | 1 per visual round |
 | `reporter/deliveryReport.js` | run context + results | `DELIVERY_REPORT.md` | 0 |
 
 ## Local console flow
@@ -58,7 +60,9 @@ browser workspace
 | `console/previewManager.js` | reuse one generated-app preview and stop it on replacement/shutdown |
 | `console/public/` | framework-free responsive browser workspace |
 
-The console calls `runPipeline()` in process. `runContext.logEvent()` persists each event to `events.jsonl` before mirroring it to the job manager, so browser delivery never replaces the durable audit trail.
+The console calls `runPipeline()` in process. It accepts text-only, screenshot-only, or combined input. PNG/JPEG/WebP references are limited to 4 files, 6 MiB each, 18 MiB total; the JSON request body is capped at 26 MiB. `runContext.logEvent()` persists each event to `events.jsonl` before mirroring it to the job manager, so browser delivery never replaces the durable audit trail.
+
+Visual evidence is written to `runs/<id>/visual/comparisons.json`: each round records reference/output mapping, score, structure/color subscores, threshold and pass/fail. The delivery report and repair records retain the bounded fixer trail. The default `0.62` threshold measures coarse visual consistency, not pixel-perfect cloning.
 
 ## Safety boundaries
 
@@ -73,12 +77,11 @@ The console calls `runPipeline()` in process. `runContext.logEvent()` persists e
 - **Gateway resilience**: chat completions stream by default, retry network/429/500/502/503/504 failures within a hard budget, and use a separate 10-minute streaming timeout.
 - **Bounded model output**: the text-brief builder asks for at most 8 files and roughly 12,000 characters so a generated MVP stays inspectable and gateway-friendly.
 - **Loopback-only console**: the HTTP server binds `127.0.0.1` by default and does not expose the control plane to the LAN.
-- **Session-only secret**: browser-entered API keys stay in process memory, are removed from public job objects, and are never written into console inputs or run artifacts.
+- **Session-only secret**: browser-entered API keys stay in process memory, are removed from public job objects, and are never written into console inputs or run artifacts. Uploaded base64 exists only at the bounded request boundary; persisted manifests/public APIs contain metadata and jailed file URLs, not base64 or private absolute paths.
 - **Console artifact jail**: run IDs, reports, screenshots, and preview targets are resolved beneath the configured runs root; screenshot names are additionally jailed beneath each `screenshots/` directory.
 - **Single preview owner**: the console keeps at most one long-lived Vite preview and stops it when another run is opened or the server shuts down.
 
 ## Extension points (post-MVP)
 
-- `providers/`: add vision-capable calls for screenshot input (Phase 3).
-- `reviewer`: add coarse screenshot-vs-reference comparison.
-- `runner`: per-interaction Playwright scripts (click flows) instead of static shots.
+- Add finer typography/spacing analysis without replacing the deterministic gate with model self-grading.
+- Add more generated-app stacks only with equivalent scaffold, dependency, and path controls.

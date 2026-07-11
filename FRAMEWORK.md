@@ -21,7 +21,7 @@ True hands-off automation requires programmatic model calls. A manual Codex or C
 Minimum viable API setup:
 
 - One OpenAI-compatible chat endpoint.
-- Optional vision-capable model for screenshot input.
+- A vision-capable OpenAI-compatible model when reference screenshots are supplied.
 - Local filesystem write operations controlled by the orchestrator.
 - Local command execution for install, build, test, and screenshot capture.
 - Token and cost tracking from API usage metadata when available.
@@ -46,7 +46,7 @@ The first version should support a single frontend stack and a narrow app type.
 Recommended MVP:
 
 - Target stack: React + Vite or Expo Web.
-- Input type: Markdown product brief first; screenshots second.
+- Input type: text-only, screenshot-only, or combined text and reference screenshots.
 - Output type: static or mock-data mobile-style app.
 - Verification: `npm install`, `npm run build`, local preview, Playwright screenshot.
 - Repair loop: at most two automated fix attempts per run.
@@ -70,7 +70,7 @@ Accepts target material:
 - `input/screenshots/`: optional screenshots for visual guidance.
 - `input/constraints.json`: stack choice, target viewport, max repair rounds, and model config.
 
-The first milestone should work from `brief.md` only. Screenshot understanding can be added after the pipeline is stable.
+Reference inputs accept PNG/JPEG/WebP, up to 4 files, 6 MiB each and 18 MiB total. The console additionally bounds the complete request body to 26 MiB. References are normalized into sanitized files plus metadata before planning.
 
 ### 2. Planner
 
@@ -82,6 +82,7 @@ Reads the input and generates:
 - Data model.
 - Interaction list.
 - Acceptance criteria.
+- Visual direction and explicit page-to-reference mapping when images are present.
 
 Output:
 
@@ -128,20 +129,17 @@ Output:
 
 Checks whether the generated app satisfies the target.
 
-MVP checks:
+Implemented checks:
 
 - Build passes.
 - Preview server starts.
 - Screenshot is non-empty.
 - Expected page text exists.
 - Expected number of pages/routes exists.
+- Reference/output comparison using local SSIM-derived structure and RGB color-histogram scores.
+- A configurable visual threshold (`0.62` by default) with per-page, per-round evidence.
 
-Later checks:
-
-- Screenshot comparison against target.
-- Layout similarity scoring.
-- Color and typography checks.
-- Accessibility checks.
+The threshold is a coarse visual-consistency gate, not pixel-perfect cloning. The model supplies the visual spec and mapping; it does not grade its own output.
 
 ### 6. Fixer
 
@@ -153,6 +151,7 @@ Repair loop rules:
 - Record each failure and patch attempt.
 - Stop instead of looping forever.
 - Do not claim success unless verification passes.
+- Feed failed visual comparison evidence to the visual fixer and retain every bounded repair round.
 
 ### 7. Reporter
 
@@ -279,7 +278,7 @@ The interview bar above is satisfied for the text-brief scope:
 - Re-run verification.
 - Record all attempts.
 
-### Phase 3 - Screenshot Input
+### Phase 3 - Screenshot Input (implemented)
 
 - Accept reference screenshots.
 - Ask vision model or preprocessing step to extract UI structure.
@@ -302,4 +301,4 @@ The interview bar above is satisfied for the text-brief scope:
 
 ## Current Decision
 
-The narrow API-backed text-brief pipeline and bounded repair loop are complete. Keep them as the verified baseline; reference screenshot input and coarse visual comparison are the next Phase 3 milestone.
+The Product Lab baseline supports text-only, screenshot-only, and combined inputs. Multimodal planning produces a structured product/visual spec; local deterministic comparison enforces coarse structure/color consistency; functional and visual repair remain bounded and auditable. Credentials are session-only, public APIs/artifacts omit secrets and base64 payloads, and private absolute input paths are never exposed.
