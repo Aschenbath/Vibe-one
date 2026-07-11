@@ -45,6 +45,7 @@ export async function plan(ctx, provider, config) {
     user: createPlannerUserContent(config),
   });
   ctx.addUsage(usage);
+  validateVisualPlan(spec, config.references ?? []);
 
   const specMd = renderSpec(spec);
   const planMd = renderPlan(spec, config);
@@ -54,6 +55,44 @@ export async function plan(ctx, provider, config) {
     summary: `${spec.pages?.length ?? 0} pages, ${spec.scenarios?.length ?? 0} scenarios planned`,
   });
   return spec;
+}
+
+function validateVisualPlan(spec, references) {
+  if (!references.length) return;
+  const visualDesign = spec?.visualDesign;
+  const stringFields = ['layout', 'typography', 'spacing', 'responsive'];
+  const listFields = ['palette', 'components'];
+  if (
+    !visualDesign
+    || stringFields.some((field) => typeof visualDesign[field] !== 'string' || !visualDesign[field].trim())
+    || listFields.some(
+      (field) => !Array.isArray(visualDesign[field])
+        || visualDesign[field].length === 0
+        || visualDesign[field].some((value) => typeof value !== 'string' || !value.trim()),
+    )
+  ) {
+    throw coded('VISUAL_PLAN_INVALID', 'planner returned an incomplete visualDesign');
+  }
+
+  const allowed = new Set(references.map((reference) => reference.name));
+  const mapped = new Set();
+  for (const page of spec.pages ?? []) {
+    if (page.referenceImage == null) continue;
+    if (!allowed.has(page.referenceImage)) {
+      throw coded('VISUAL_PLAN_INVALID', `planner mapped an unknown reference: ${page.referenceImage}`);
+    }
+    mapped.add(page.referenceImage);
+  }
+  const missing = [...allowed].filter((name) => !mapped.has(name));
+  if (missing.length) {
+    throw coded('VISUAL_PLAN_INVALID', `planner did not map references: ${missing.join(', ')}`);
+  }
+}
+
+function coded(code, message) {
+  const error = new Error(`${code}: ${message}`);
+  error.code = code;
+  return error;
 }
 
 function renderSpec(spec) {

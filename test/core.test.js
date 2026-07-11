@@ -13,7 +13,8 @@ import { writeReport } from '../src/reporter/deliveryReport.js';
 import { exitCodeForStatus } from '../src/cli/status.js';
 import { createRunContext } from '../src/core/runContext.js';
 import { loadConfig } from '../src/core/config.js';
-import { PLANNER_SYSTEM, createPlannerUserContent } from '../src/core/planner.js';
+import { PLANNER_SYSTEM, createPlannerUserContent, plan } from '../src/core/planner.js';
+import { runPipeline } from '../src/core/pipeline.js';
 import {
   REFERENCE_LIMITS,
   normalizeReferencePayloads,
@@ -177,6 +178,106 @@ test('planner content includes reference images and visual schema instructions',
   assert.match(PLANNER_SYSTEM, /visualDesign/);
   assert.match(PLANNER_SYSTEM, /referenceImage/);
 });
+
+test('planner rejects incomplete or unsafe visual mappings for reference jobs', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-planner-visual-contract-'));
+  const reference = {
+    name: 'home.png',
+    type: 'image/png',
+    width: 1,
+    height: 1,
+    buffer: ONE_PIXEL_PNG,
+  };
+  const ctx = {
+    runDir: root,
+    logEvent: async () => {},
+    addUsage: () => {},
+  };
+  const config = {
+    brief: '',
+    references: [reference],
+    stack: 'react-vite',
+    viewport: { width: 1, height: 1 },
+    maxRepairRounds: 0,
+  };
+  const invalidSpecs = [
+    { pages: [{ name: 'Home', route: '/', referenceImage: 'home.png' }] },
+    {
+      visualDesign: visualDesignFixture(),
+      pages: [{ name: 'Home', route: '/', referenceImage: 'missing.png' }],
+    },
+    {
+      visualDesign: visualDesignFixture(),
+      pages: [{ name: 'Home', route: '/', referenceImage: null }],
+    },
+  ];
+
+  try {
+    for (const spec of invalidSpecs) {
+      await assert.rejects(
+        plan(ctx, { chatJson: async () => ({ json: spec }) }, config),
+        (error) => error.code === 'VISUAL_PLAN_INVALID',
+      );
+    }
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('pipeline fails before build when a reference is not mapped by the planner', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-pipeline-visual-contract-'));
+  const targetDir = path.join(root, 'target');
+  let buildCalls = 0;
+  const config = {
+    stack: 'react-vite',
+    viewport: { width: 1, height: 1 },
+    maxRepairRounds: 0,
+    model: 'stub',
+    baseUrl: 'http://stub.local/v1',
+    brief: '',
+    references: [{
+      name: 'home.png',
+      type: 'image/png',
+      width: 1,
+      height: 1,
+      buffer: ONE_PIXEL_PNG,
+    }],
+    runsRoot: path.join(root, 'runs'),
+  };
+  const provider = {
+    chatJson: async () => ({
+      json: {
+        visualDesign: visualDesignFixture(),
+        pages: [{ name: 'Home', route: '/', referenceImage: null }],
+      },
+    }),
+    chat: async () => {
+      buildCalls += 1;
+      throw new Error('builder should not run');
+    },
+  };
+
+  try {
+    const result = await runPipeline({ targetDir, config, provider });
+    const events = await fs.readFile(path.join(result.runDir, 'logs', 'events.jsonl'), 'utf8');
+    assert.equal(result.status, 'failed');
+    assert.equal(buildCalls, 0);
+    assert.match(events, /"type":"fatal".*"code":"VISUAL_PLAN_INVALID"/);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+function visualDesignFixture() {
+  return {
+    layout: 'single page',
+    palette: ['#ffffff'],
+    typography: 'sans serif',
+    spacing: '16px rhythm',
+    components: ['Header'],
+    responsive: 'fluid layout',
+  };
+}
 
 test('provider retries transient gateway failures', async (t) => {
   const originalFetch = globalThis.fetch;
