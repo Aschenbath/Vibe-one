@@ -21,12 +21,70 @@ import {
   writeReferencePayloads,
   discoverReferenceImages,
 } from '../src/core/referenceImages.js';
+import { renderProductDesign, validateProductDesign } from '../src/core/productDesign.js';
 
 const APP = path.resolve('/tmp/run/app');
 const ONE_PIXEL_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
   'base64',
 );
+const PRODUCT_DESIGN = {
+  productType: '数据密集型 B2B SaaS',
+  targetUsers: ['客服运营主管', '质检专员'],
+  tone: '现代数据工作台，克制可信、信息优先',
+  density: 'compact',
+  navigation: '左侧主导航配合顶部任务上下文切换',
+  contentStrategy: '先展示异常、趋势与待处理任务，再提供明细下钻',
+  componentLanguage: ['紧凑指标卡', '高密度数据表', '状态标签与行内操作'],
+  responsiveRules: ['桌面端保留三栏工作区', '窄屏折叠侧栏并纵向排列摘要卡'],
+  tokens: {
+    colors: {
+      canvas: '#F4F6F8',
+      surface: '#FFFFFF',
+      text: '#17202A',
+      primary: '#2457D6',
+      success: '#16825D',
+      warning: '#C47A12',
+      danger: '#C53A3A',
+    },
+    typography: {
+      display: '700 32px/1.2 Inter, sans-serif',
+      heading: '650 20px/1.3 Inter, sans-serif',
+      body: '400 14px/1.5 Inter, sans-serif',
+      caption: '500 12px/1.4 Inter, sans-serif',
+    },
+    spacing: ['4px', '8px', '12px', '16px', '24px', '32px'],
+    radii: ['4px', '8px', '12px'],
+  },
+  requiredStates: [
+    { name: 'loading', trigger: '首次加载质量概览时' },
+    { name: 'empty', trigger: '筛选条件没有匹配记录时' },
+    { name: 'success', trigger: '批量质检任务提交完成时' },
+  ],
+};
+
+test('product design validates an executable compact B2B SaaS contract', () => {
+  assert.equal(validateProductDesign(PRODUCT_DESIGN).density, 'compact');
+});
+
+test('product design renders Chinese-first bilingual Markdown', () => {
+  const markdown = renderProductDesign(PRODUCT_DESIGN);
+
+  assert.match(markdown, /产品类型 \/ Product Type/);
+  assert.match(markdown, /Design Tokens/);
+  assert.match(markdown, /响应式规则 \/ Responsive Rules/);
+});
+
+test('product design rejects vague tone and incomplete tokens with a stable code', () => {
+  assert.throws(
+    () => validateProductDesign({ ...PRODUCT_DESIGN, tone: '现代简洁' }),
+    (error) => error.code === 'PRODUCT_DESIGN_INVALID',
+  );
+  assert.throws(
+    () => validateProductDesign({ ...PRODUCT_DESIGN, tokens: { colors: {} } }),
+    (error) => error.code === 'PRODUCT_DESIGN_INVALID',
+  );
+});
 
 test('package test command is compatible with the Node 20 CI runner', async () => {
   const pkg = JSON.parse(await fs.readFile(new URL('../package.json', import.meta.url), 'utf8'));
