@@ -117,13 +117,14 @@ test('browser console submits a reference image and renders live evidence', { sk
   let submittedReferences;
   const pipeline = async ({ config, planOnly }) => {
     submittedReferences = config.references;
-    const runId = `console-demo-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}`;
+    const runId = 'console-demo-2026-07-11T08-00-00';
+    const timestamp = '2026-07-11T08:00:00.000Z';
     const runDir = path.join(runsRoot, runId);
     const events = [
-      { ts: new Date().toISOString(), type: 'plan:start', summary: 'planning from brief' },
-      { ts: new Date().toISOString(), type: 'plan:done', summary: '3 pages, 4 scenarios' },
-      { ts: new Date().toISOString(), type: 'build:start', summary: 'generating app files' },
-      { ts: new Date().toISOString(), type: 'review', summary: 'all checks pass' },
+      { ts: timestamp, type: 'plan:start', summary: 'planning from brief' },
+      { ts: timestamp, type: 'plan:done', summary: '3 pages, 4 scenarios' },
+      { ts: timestamp, type: 'build:start', summary: 'generating app files' },
+      { ts: timestamp, type: 'review', summary: 'all checks pass' },
     ];
     await fs.mkdir(path.join(runDir, 'logs'), { recursive: true });
     await fs.mkdir(path.join(runDir, 'screenshots'), { recursive: true });
@@ -138,7 +139,7 @@ test('browser console submits a reference image and renders live evidence', { sk
       `# Delivery Report - ${runId}\n\n- Status: **${planOnly ? 'planned' : 'success'}**\n- Model: ${config.model} @ ${config.baseUrl}\n\n## Verification checks\n\n- [x] all checks pass\n`,
       'utf8',
     );
-    const reportEvent = { ts: new Date().toISOString(), type: 'report:written', summary: 'delivery report ready' };
+    const reportEvent = { ts: timestamp, type: 'report:written', summary: 'delivery report ready' };
     config.onEvent(reportEvent);
     await fs.writeFile(
       path.join(runDir, 'logs', 'events.jsonl'),

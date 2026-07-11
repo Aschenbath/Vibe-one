@@ -98,7 +98,7 @@ Each real run writes to `runs/<target>-<timestamp>/`:
 | artifact | meaning |
 | --- | --- |
 | `SPEC.generated.md` / `PLAN.generated.md` | planned pages, content checks, and scenarios |
-| `input/references/manifest.json` | sanitized reference metadata; image bytes are stored as files, never base64 |
+| `references/manifest.json` | sanitized reference metadata; image bytes are stored as files, never base64 |
 | `app/` | generated runnable app |
 | `logs/` | command output and structured `events.jsonl` |
 | `screenshots/` | page and post-interaction captures |

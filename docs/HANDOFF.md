@@ -40,6 +40,6 @@ Both runs used `gpt-5.6-sol` through a configured OpenAI-compatible endpoint. Th
 
 The local Product Lab now accepts text-only, screenshot-only, and combined input. PNG/JPEG/WebP references are bounded to 4 files, 6 MiB each and 18 MiB total; the console request body is capped at 26 MiB. An OpenAI-compatible multimodal planner produces a structured product/visual spec and page mapping. Generated screenshots then pass through deterministic local SSIM structure and RGB histogram scoring, followed by bounded visual repair when needed. The default `0.62` threshold means coarse visual consistency, not pixel-perfect cloning.
 
-Evidence is available in the Product Lab reference, screenshot, visual-comparison and repair tabs, and on disk under `runs/<id>/input/references/`, `runs/<id>/screenshots/`, `runs/<id>/visual/comparisons.json`, and `runs/<id>/DELIVERY_REPORT.md`.
+Evidence is available in the Product Lab reference, screenshot, visual-comparison and repair tabs, and on disk under `runs/<id>/references/`, `runs/<id>/screenshots/`, `runs/<id>/visual/comparisons.json`, and `runs/<id>/DELIVERY_REPORT.md`.
 
 Credentials remain session-only. Public job data and persisted artifacts do not expose API keys, uploaded base64, or private absolute input paths. Remote hosting/authentication, concurrent jobs, durable credentials, and mid-command cancellation remain outside the local-console boundary.
