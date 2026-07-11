@@ -343,6 +343,7 @@ test('planner validates product design and writes bilingual artifacts', async ()
     assert.match(specMd, /#2457D6/);
     assert.match(planMd, /验证计划 \/ Verification Plan/);
     assert.match(planMd, /数据密集型 B2B SaaS/);
+    assert.match(planMd, /面向客服运营团队的会话质量与风险处置工作台/);
     assert.ok(events.some((event) => event.type === 'design:done'));
     assert.ok(events.some((event) => event.type === 'plan:done'));
   } finally {

@@ -150,6 +150,7 @@ function renderSpec(spec) {
 function renderPlan(spec, config) {
   return [
     '# 生成计划 / Generated Plan', '',
+    '- 产品概要 / Product Summary: ' + (spec.summary ?? '(none)'),
     `- Stack: ${config.stack}`,
     `- Viewport: ${config.viewport.width}x${config.viewport.height}`,
     `- Max repair rounds: ${config.maxRepairRounds}`,
