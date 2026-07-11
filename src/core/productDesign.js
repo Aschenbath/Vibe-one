@@ -126,7 +126,7 @@ function requireStringList(value, field) {
   if (
     !Array.isArray(value)
     || value.length === 0
-    || value.some((item) => typeof item !== 'string' || item.trim().length < 4)
+    || value.some((item) => typeof item !== 'string' || !item.trim())
   ) {
     fail(`${field} incomplete`);
   }

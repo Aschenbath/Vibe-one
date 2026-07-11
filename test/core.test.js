@@ -67,6 +67,19 @@ test('product design validates an executable compact B2B SaaS contract', () => {
   assert.equal(validateProductDesign(PRODUCT_DESIGN).density, 'compact');
 });
 
+test('product design accepts concise non-empty list labels', () => {
+  const design = validateProductDesign({
+    ...PRODUCT_DESIGN,
+    targetUsers: ['CEO'],
+    componentLanguage: ['表格'],
+    responsiveRules: ['抽屉'],
+  });
+
+  assert.deepEqual(design.targetUsers, ['CEO']);
+  assert.deepEqual(design.componentLanguage, ['表格']);
+  assert.deepEqual(design.responsiveRules, ['抽屉']);
+});
+
 test('product design renders Chinese-first bilingual Markdown', () => {
   const markdown = renderProductDesign(PRODUCT_DESIGN);
 
@@ -117,11 +130,11 @@ test('product design requires at least two distinct valid states', () => {
 test('product design rejects incomplete lists, states, triggers, and token groups', () => {
   const invalidCases = [
     ['empty targetUsers', { targetUsers: [] }],
-    ['short targetUsers', { targetUsers: ['人'] }],
+    ['blank targetUsers', { targetUsers: [' '] }],
     ['empty componentLanguage', { componentLanguage: [] }],
-    ['short componentLanguage', { componentLanguage: ['卡'] }],
+    ['blank componentLanguage', { componentLanguage: [' '] }],
     ['empty responsiveRules', { responsiveRules: [] }],
-    ['short responsiveRules', { responsiveRules: ['自适应'] }],
+    ['blank responsiveRules', { responsiveRules: [' '] }],
     ['invalid state', { requiredStates: [{ name: 'idle', trigger: '等待任务开始时' }, PRODUCT_DESIGN.requiredStates[1]] }],
     ['short trigger', { requiredStates: [{ name: 'loading', trigger: '短' }, PRODUCT_DESIGN.requiredStates[1]] }],
     ['colors insufficient', { tokens: { ...PRODUCT_DESIGN.tokens, colors: { canvas: '#fff' } } }],
