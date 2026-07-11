@@ -43,7 +43,7 @@ export async function runPipeline({ targetDir, config, planOnly = false, provide
 
     // verify + bounded repair
     for (rounds = 0; rounds <= config.maxRepairRounds; rounds++) {
-      const verdict = await verifyOnce(ctx, config, spec);
+      const verdict = await verifyOnce(ctx, config, spec, rounds);
       finalReview = verdict.reviewResult;
       shots = verdict.shots;
       scenarioResults = verdict.scenarioResults ?? [];
@@ -122,7 +122,7 @@ export async function runPipeline({ targetDir, config, planOnly = false, provide
 }
 
 // One full verification pass: install -> build -> preview -> screenshots -> review.
-async function verifyOnce(ctx, config, spec) {
+async function verifyOnce(ctx, config, spec, round) {
   const install = await npmInstall(ctx);
   if (install.exitCode !== 0) {
     return { install, build: null, shots: [], reviewResult: failEarly('npm install failed') };
@@ -151,6 +151,7 @@ async function verifyOnce(ctx, config, spec) {
       spec.pages ?? [],
       config.references ?? [],
       config.visualThreshold,
+      round,
     );
   } catch (err) {
     return {

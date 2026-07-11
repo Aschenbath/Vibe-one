@@ -462,6 +462,14 @@ test('visual failure sends both images to the fixer and passes after one repair'
   assert.equal(history[0].results[0].pass, false);
   assert.equal(history[1].results[0].pass, true);
   assert.ok(history[1].results[0].score > history[0].results[0].score);
+  const firstActual = history[0].results[0].actualImage;
+  const secondActual = history[1].results[0].actualImage;
+  assert.notEqual(firstActual, secondActual);
+  const [firstBytes, secondBytes] = await Promise.all([
+    fs.readFile(path.join(result.runDir, 'screenshots', firstActual)),
+    fs.readFile(path.join(result.runDir, 'screenshots', secondActual)),
+  ]);
+  assert.notDeepEqual(firstBytes, secondBytes);
   const report = await fs.readFile(path.join(result.runDir, 'DELIVERY_REPORT.md'), 'utf8');
   assert.match(report, /### Round 0/);
   assert.match(report, /### Round 1/);

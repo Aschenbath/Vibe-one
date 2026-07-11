@@ -164,6 +164,7 @@ export async function compareReferencePages(
   pages,
   references,
   threshold = DEFAULT_VISUAL_THRESHOLD,
+  round = 0,
 ) {
   const mapped = pages.filter((page) => page.referenceImage);
   if (!mapped.length) return [];
@@ -201,7 +202,7 @@ export async function compareReferencePages(
           waitUntil: 'networkidle',
           timeout: 30_000,
         });
-        const actualName = `visual-${slug(planned.name)}.png`;
+        const actualName = `visual-${slug(planned.name)}-round-${round}.png`;
         const actualFile = path.join(ctx.screenshotsDir, actualName);
         await page.screenshot({ path: actualFile, fullPage: false });
         const scores = await compareImageFiles(page, {
