@@ -19,6 +19,80 @@ test('console package command is registered', async () => {
   assert.equal(pkg.scripts.console, 'node src/console/index.js');
 });
 
+test('browser console keeps the Product Lab workspace responsive and accessible', { skip: !ENABLED, timeout: 60_000 }, async () => {
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-layout-')));
+  const app = createConsoleServer({ runsRoot: path.join(root, 'runs'), env: {} });
+  const address = await app.listen(0);
+  const browser = await chromium.launch();
+
+  try {
+    const desktop = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await desktop.goto(address.url);
+    const desktopLayout = await desktop.evaluate(() => {
+      const rail = document.querySelector('#history-drawer').getBoundingClientRect();
+      const main = document.querySelector('.product-lab').getBoundingClientRect();
+      const focus = document.querySelector('#focus-workspace').getBoundingClientRect();
+      const brief = document.querySelector('#brief').getBoundingClientRect();
+      const dropzone = document.querySelector('#reference-dropzone').getBoundingClientRect();
+      return {
+        historyCollapsed: document.querySelector('#history-toggle').getAttribute('aria-expanded') === 'false'
+          && document.querySelector('#history-panel').hidden,
+        railWidth: Math.round(rail.width),
+        focusCentered: Math.abs((focus.left + focus.width / 2) - (main.left + main.width / 2)) <= 2,
+        focusWidth: Math.round(focus.width),
+        inputAboveFold: brief.bottom <= window.innerHeight,
+        dropzoneAboveFold: dropzone.bottom <= window.innerHeight,
+        noHorizontalOverflow: document.documentElement.scrollWidth <= window.innerWidth,
+      };
+    });
+    assert.deepEqual(desktopLayout, {
+      historyCollapsed: true,
+      railWidth: 72,
+      focusCentered: true,
+      focusWidth: 1040,
+      inputAboveFold: true,
+      dropzoneAboveFold: true,
+      noHorizontalOverflow: true,
+    });
+
+    const mobile = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    await mobile.goto(address.url);
+    await mobile.getByRole('button', { name: '运行设置' }).click();
+    assert.equal(await mobile.locator('#settings-drawer').evaluate((dialog) => dialog.open), true);
+    await mobile.getByRole('button', { name: '完成' }).click();
+    await mobile.getByRole('button', { name: '展开历史' }).click();
+    assert.equal(await mobile.locator('#history-toggle').getAttribute('aria-expanded'), 'true');
+    assert.equal(await mobile.locator('#history-panel').isVisible(), true);
+    for (const selector of ['#brief', '#reference-trigger', '#launch-run']) {
+      const control = mobile.locator(selector);
+      await control.scrollIntoViewIfNeeded();
+      assert.equal(await control.isVisible(), true);
+      assert.equal(await control.evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        return rect.left >= 0 && rect.right <= window.innerWidth && rect.bottom > 0 && rect.top < window.innerHeight;
+      }), true);
+    }
+    assert.equal(await mobile.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+
+    const reduced = await browser.newPage({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' });
+    await reduced.goto(address.url);
+    const durations = await reduced.locator('#focus-workspace').evaluate((element) => {
+      const style = getComputedStyle(element);
+      const normalize = (value) => value === '0.00001s' || value === '1e-05s' ? '0.01ms' : value;
+      return {
+        animation: normalize(style.animationDuration),
+        transition: normalize(style.transitionDuration),
+      };
+    });
+    assert.ok(['0s', '0.01ms'].includes(durations.animation));
+    assert.ok(['0s', '0.01ms'].includes(durations.transition));
+  } finally {
+    await browser.close();
+    await app.close();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test('browser console submits a reference image and renders live evidence', { skip: !ENABLED, timeout: 60_000 }, async () => {
   const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-browser-')));
   const runsRoot = path.join(root, 'runs');
