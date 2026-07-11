@@ -123,6 +123,36 @@ test('a screenshot-only job persists references without exposing base64, paths, 
   }
 });
 
+test('public jobs and fatal events do not expose endpoints or absolute paths', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-public-secrecy-'));
+  const privateEndpoint = 'https://private.invalid/v1';
+  const privatePath = 'D:\\private\\vibe-secret\\artifact.txt';
+  const manager = createJobManager({
+    runsRoot: path.join(root, 'runs'),
+    env: {},
+    pipeline: async () => {
+      throw new Error(`upstream ${privateEndpoint} failed at ${privatePath}`);
+    },
+  });
+  manager.setSessionConfig({
+    apiKey: 'public-secrecy-key',
+    baseUrl: privateEndpoint,
+    model: 'stub',
+  });
+
+  try {
+    const started = await manager.startJob({ brief: '# Private upstream', mode: 'run' });
+    await manager.waitForJob(started.id);
+    const job = manager.getJob(started.id);
+    const serialized = JSON.stringify(job);
+
+    assert.equal(Object.hasOwn(job, 'baseUrl'), false);
+    assert.doesNotMatch(serialized, /private\.invalid|vibe-secret|public-secrecy-key/);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test('visual comparison events expose a visual stage and sanitized error code', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-visual-stage-'));
   let release;

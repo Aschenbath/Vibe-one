@@ -7,6 +7,7 @@ import path from 'node:path';
 import { chromium } from 'playwright';
 import { createConsoleServer } from '../src/console/server.js';
 import { PROJECT_ROOT } from '../src/core/runContext.js';
+import { writeReport } from '../src/reporter/deliveryReport.js';
 
 const ENABLED = process.env.VIBE_ONE_CONSOLE_E2E === '1';
 const ONE_PIXEL_PNG = Buffer.from(
@@ -325,11 +326,41 @@ test('browser console reconstructs persisted reference and visual evidence', { s
   const runsRoot = path.join(root, 'runs');
   const runId = 'visual-history-run';
   const runDir = path.join(runsRoot, runId);
+  const privateEndpoint = 'https://private.invalid/v1';
+  const privatePath = 'D:\\private\\vibe-secret\\artifact.txt';
   await fs.mkdir(path.join(runDir, 'logs'), { recursive: true });
   await fs.mkdir(path.join(runDir, 'references'), { recursive: true });
   await fs.mkdir(path.join(runDir, 'screenshots'), { recursive: true });
-  await fs.writeFile(path.join(runDir, 'DELIVERY_REPORT.md'), '# Delivery Report\n- Status: **success**\n', 'utf8');
-  await fs.writeFile(path.join(runDir, 'logs', 'events.jsonl'), `${JSON.stringify({ ts: '2026-07-11T08:00:00.000Z', type: 'report:written' })}\n`, 'utf8');
+  const reportCtx = {
+    runId,
+    runDir,
+    events: [],
+    usage: { promptTokens: 0, completionTokens: 0, calls: 0 },
+    async logEvent(type, data) {
+      this.events.push({ ts: '2026-07-11T08:00:00.000Z', type, ...data });
+    },
+  };
+  await writeReport(reportCtx, {
+    config: {
+      model: 'stub',
+      baseUrl: privateEndpoint,
+      stack: 'react-vite',
+      maxRepairRounds: 0,
+      references: [],
+    },
+    spec: { summary: 'Visual history' },
+    status: 'success',
+    rounds: 0,
+    finalReview: { checks: [] },
+    shots: [],
+    scenarioResults: [],
+    error: new Error(`upstream ${privateEndpoint} failed at ${privatePath}`),
+  });
+  await fs.writeFile(
+    path.join(runDir, 'logs', 'events.jsonl'),
+    reportCtx.events.map((event) => JSON.stringify(event)).join('\n') + '\n',
+    'utf8',
+  );
   await fs.writeFile(path.join(runDir, 'references', 'home.png'), ONE_PIXEL_PNG);
   await fs.writeFile(path.join(runDir, 'screenshots', 'home-round-0.png'), ONE_PIXEL_PNG);
   await fs.writeFile(path.join(runDir, 'screenshots', 'home-round-1.png'), ONE_PIXEL_PNG);
@@ -371,6 +402,10 @@ test('browser console reconstructs persisted reference and visual evidence', { s
     assert.equal(await visual.locator('img').count(), 4);
     assert.match(await visual.locator('img').nth(1).getAttribute('src'), /\/screenshots\/home-round-1\.png$/);
     assert.match(await visual.locator('img').nth(3).getAttribute('src'), /\/screenshots\/home-round-0\.png$/);
+    await page.locator('[data-tab="report"]').click();
+    await page.locator('#report-content').filter({ hasText: 'Delivery Report' }).waitFor();
+    assert.doesNotMatch(await page.locator('body').innerText(), /private\.invalid|vibe-secret/);
+    await page.locator('[data-tab="visual"]').click();
   }
 
   try {

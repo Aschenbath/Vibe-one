@@ -116,7 +116,12 @@ export function createJobManager({ runsRoot, pipeline = runPipeline, load = load
     } catch (error) {
       job.status = 'failed';
       job.stage = 'failed';
-      acceptEvent(job, { ts: new Date().toISOString(), type: 'fatal', summary: error.message });
+      acceptEvent(job, {
+        ts: new Date().toISOString(),
+        type: 'fatal',
+        summary: error.code ? String(error.code) : 'PIPELINE_FAILED',
+        ...(error.code ? { code: String(error.code) } : {}),
+      });
     } finally {
       job.completedAt = new Date().toISOString();
       job.secret = '';
@@ -190,7 +195,6 @@ function publicJob(job, includeEvents = false) {
     title: job.title,
     mode: job.mode,
     model: job.model,
-    baseUrl: job.baseUrl,
     references: [...job.references],
     referenceCount: job.referenceCount,
     inputMode: job.inputMode,

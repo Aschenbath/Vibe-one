@@ -534,6 +534,8 @@ test('visual repair content includes diagnostics, reference, and generated scree
 
 test('delivery report records input references and visual score history', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-visual-report-'));
+  const privateEndpoint = 'https://private.invalid/v1';
+  const privatePath = 'D:\\private\\vibe-secret\\artifact.txt';
   const ctx = {
     runId: 'visual-run',
     runDir: root,
@@ -545,7 +547,7 @@ test('delivery report records input references and visual score history', async 
   };
   const config = {
     model: 'stub',
-    baseUrl: 'http://local/v1',
+    baseUrl: privateEndpoint,
     stack: 'react-vite',
     maxRepairRounds: 1,
     references: [{ name: 'home.png', width: 390, height: 844, type: 'image/png' }],
@@ -564,15 +566,18 @@ test('delivery report records input references and visual score history', async 
     shots: [],
     scenarioResults: [],
     visualHistory,
-    error: null,
+    error: new Error(`upstream ${privateEndpoint} failed at ${privatePath}`),
   });
   const report = await fs.readFile(path.join(root, 'DELIVERY_REPORT.md'), 'utf8');
+  const events = JSON.stringify(ctx.events);
 
   assert.match(report, /## Input references/);
   assert.match(report, /home\.png.*390x844.*image\/png/);
   assert.match(report, /### Round 0[\s\S]*0\.5400 \/ 0\.6200/);
   assert.match(report, /### Round 1[\s\S]*0\.7812 \/ 0\.6200/);
   assert.doesNotMatch(report, /Visual similarity to any reference is not scored/);
+  assert.doesNotMatch(report, /private\.invalid|vibe-secret/);
+  assert.doesNotMatch(events, /vibe-visual-report-|vibe-secret|private\.invalid/);
   await fs.rm(root, { recursive: true, force: true });
 });
 

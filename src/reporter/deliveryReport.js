@@ -19,7 +19,7 @@ export async function writeReport(ctx, {
   const lines = [
     `# Delivery Report - ${ctx.runId}`, '',
     `- Status: **${status}**`,
-    `- Model: ${config.model} @ ${config.baseUrl}`,
+    `- Model: ${config.model}`,
     `- Stack: ${config.stack}`,
     `- Repair rounds used: ${rounds}/${config.maxRepairRounds}`,
     `- Token usage: ${ctx.usage.promptTokens} prompt + ${ctx.usage.completionTokens} completion across ${ctx.usage.calls} calls`,
@@ -68,7 +68,7 @@ export async function writeReport(ctx, {
         '',
       ])
       : ['(no visual comparisons executed)', '']),
-    ...(error ? ['## Fatal error', '', '```', String(error), '```', ''] : []),
+    ...(error ? ['## Fatal error', '', `\`${error.code || 'PIPELINE_FAILED'}\``, ''] : []),
     '## Known gaps', '',
     '- Mock data only, no backend.',
     '',
@@ -76,7 +76,7 @@ export async function writeReport(ctx, {
 
   const file = path.join(ctx.runDir, 'DELIVERY_REPORT.md');
   await fs.writeFile(file, lines.join('\n'), 'utf8');
-  await ctx.logEvent('report:written', { summary: file });
+  await ctx.logEvent('report:written', { summary: 'DELIVERY_REPORT.md' });
   return file;
 }
 

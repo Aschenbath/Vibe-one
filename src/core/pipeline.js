@@ -93,7 +93,7 @@ export async function runPipeline({ targetDir, config, planOnly = false, provide
   } catch (err) {
     fatal = err;
     await ctx.logEvent('fatal', {
-      summary: err.message,
+      summary: err.code ? String(err.code) : 'PIPELINE_FAILED',
       ...(err.code ? { code: String(err.code) } : {}),
     });
   }
