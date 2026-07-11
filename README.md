@@ -1,55 +1,61 @@
 # Vibe-one
 
-[![ci](https://github.com/Aschenbath/Vibe-one/actions/workflows/ci.yml/badge.svg)](https://github.com/Aschenbath/Vibe-one/actions/workflows/ci.yml)
+[![CI](https://github.com/Aschenbath/Vibe-one/actions/workflows/ci.yml/badge.svg)](https://github.com/Aschenbath/Vibe-one/actions/workflows/ci.yml)
 
-Bounded AI delivery pipeline: accepts a product brief, reference screenshots, or both; generates a structured product/visual spec and runnable React app; verifies it with local commands, Playwright scenarios, and deterministic visual checks; and retains bounded repair evidence.
+Vibe-one 是一条有明确边界的 AI 产品交付流水线：接收产品需求、参考截图或两者组合，生成结构化产品/视觉规格与可运行的 React 应用，再通过本地命令、Playwright 交互场景和确定性视觉检查完成验收，并保留有界修复的完整证据。
 
 ```text
-brief / screenshots -> multimodal plan -> generated app -> build + screenshots -> mechanical + visual gates -> bounded repair -> report
+需求 / 参考截图 -> 多模态规划 -> 生成应用 -> 构建与截图 -> 机械验收与视觉门禁 -> 有界修复 -> 交付报告
 ```
 
-See `FRAMEWORK.md` for the product boundary and `docs/architecture.md` for module details.
+产品边界见 [`FRAMEWORK.md`](FRAMEWORK.md)，模块设计见 [`docs/architecture.md`](docs/architecture.md)。
 
-## Local console
+## Product Lab 本地工作台
 
-Vibe-one now includes a browser control plane for the existing pipeline:
+启动浏览器工作台：
 
 ```bash
 npm run console
 ```
 
-Open the printed loopback URL. Product Lab accepts text-only, screenshot-only, or combined input. References may be PNG, JPEG, or WebP: at most 4 images, 6 MiB each, 18 MiB total, with the complete job request bounded to 26 MiB. It streams pipeline events, keeps local run history, exposes reference/generated/visual-repair evidence, and launches successful generated apps in an embedded preview.
+打开终端输出的本地回环地址。Product Lab 支持：
 
-![Vibe-one local console](docs/screenshots/console-desktop.png)
+- 纯文字需求、纯截图输入，或文字与截图组合输入；
+- PNG、JPEG、WebP，最多 4 张，单张不超过 6 MiB、总计不超过 18 MiB；
+- 单次完整任务请求最大 26 MiB；
+- 实时流水线事件、本地运行历史、参考图/结果图/视觉修复证据；
+- 在内嵌预览中启动验收通过的生成应用。
 
-The browser never persists an API key. A key entered in the page remains only in the current Node process; environment variables are still supported and take over when no session override is present. Public job objects and persisted artifacts exclude credentials, uploaded base64 payloads, and private absolute input paths; the HTTP control plane is loopback-only by default.
+![Vibe-one Product Lab 桌面工作台](docs/screenshots/console-desktop.png)
 
-## Verified demos
+浏览器不会持久化 API Key。页面中填写的 Key 只保留在当前 Node.js 进程内；未设置会话覆盖时仍可使用环境变量。公开任务对象和持久化产物不会包含凭证、上传图片的 base64、私有 endpoint 或绝对路径。HTTP 控制面默认仅监听 loopback。
 
-Both committed demos were generated through a real OpenAI-compatible API with `gpt-5.6-sol`, then verified locally without model-based self-review.
+## 已验证演示
 
-| demo | result | evidence |
+以下两个演示均通过真实 OpenAI-compatible API 使用 `gpt-5.6-sol` 生成，再由本地机械验收完成验证，不使用模型自我打分。
+
+| 演示 | 结果 | 证据 |
 | --- | --- | --- |
-| Expense tracker | success on round 0; 3 pages and 4 interaction scenarios | [delivery report](docs/demo-reports/expense-mobile.md) |
-| Notes app | success after repair round 1; 2 pages and 2 interaction scenarios | [repaired delivery report](docs/demo-reports/notes-mobile-repaired.md) |
+| 自由职业者记账应用 | 第 0 轮成功；3 个页面、4 个交互场景 | [交付报告](docs/demo-reports/expense-mobile.md) |
+| 笔记应用 | 第 1 轮修复后成功；2 个页面、2 个交互场景 | [修复后交付报告](docs/demo-reports/notes-mobile-repaired.md) |
 
-| Expense tracker | Notes app |
+| 记账应用 | 笔记应用 |
 | --- | --- |
-| ![Generated expense tracker home](docs/screenshots/expense-home.png) | ![Generated notes list](docs/screenshots/notes-list.png) |
-| ![Generated expense entry form](docs/screenshots/expense-add.png) | ![Generated notes editor](docs/screenshots/notes-editor.png) |
+| ![生成的记账应用首页](docs/screenshots/expense-home.png) | ![生成的笔记列表](docs/screenshots/notes-list.png) |
+| ![生成的支出录入页](docs/screenshots/expense-add.png) | ![生成的笔记编辑页](docs/screenshots/notes-editor.png) |
 
-The notes run is the failed-then-repaired case: the initial app redirected the planned placeholder editor route back to the list, three mechanical content checks failed, the fixer patched `src/App.jsx`, and the second verification pass completed successfully.
+笔记演示是完整的“失败后修复”案例：初始应用把规划中的占位编辑路由重定向回列表页，导致 3 项机械内容检查失败；fixer 随后修改 `src/App.jsx`，第二轮验证成功。
 
-## Quick start
+## 快速开始
 
 ```bash
 npm install
 npx playwright install chromium
 ```
 
-For CLI use, set the endpoint in the current shell. The CLI reads `process.env` directly and never writes the key into a run artifact. For browser use, `npm run console` also accepts a session-only key on the page.
+CLI 直接读取当前进程的环境变量，不会把 Key 写入运行产物。浏览器工作台也支持在页面中填写仅本次会话有效的 Key。
 
-PowerShell:
+PowerShell：
 
 ```powershell
 $env:VIBE_ONE_API_KEY = 'your-key'
@@ -57,7 +63,7 @@ $env:VIBE_ONE_BASE_URL = 'https://your-openai-compatible-endpoint/v1'
 $env:VIBE_ONE_MODEL = 'your-model-id'
 ```
 
-POSIX shell:
+POSIX Shell：
 
 ```bash
 export VIBE_ONE_API_KEY='your-key'
@@ -65,7 +71,7 @@ export VIBE_ONE_BASE_URL='https://your-openai-compatible-endpoint/v1'
 export VIBE_ONE_MODEL='your-model-id'
 ```
 
-Run either demo or use planner-only mode:
+运行演示或只生成规划：
 
 ```bash
 npm run demo:expense
@@ -73,7 +79,7 @@ npm run demo:notes
 node src/cli/index.js plan examples/expense-mobile
 ```
 
-Optional network controls:
+可选网络参数：
 
 ```text
 VIBE_ONE_MAX_RETRIES=6
@@ -81,9 +87,9 @@ VIBE_ONE_REQUEST_TIMEOUT_MS=120000
 VIBE_ONE_STREAM_TIMEOUT_MS=600000
 ```
 
-Chat completions stream by default. Streaming prevents long builder responses from being cut off by an intermediary gateway timeout; ordinary JSON responses remain supported as a fallback.
+Chat Completions 默认使用流式响应，避免较长的 builder 输出被中间网关提前截断；普通 JSON 响应仍作为兼容回退。
 
-## Tests
+## 测试
 
 ```bash
 npm test
@@ -91,45 +97,50 @@ npm run test:console:e2e
 VIBE_ONE_E2E=1 npm test
 ```
 
-The default suite is offline. `npm run test:console:e2e` drives the browser workspace at desktop and mobile viewports with a stub pipeline. The opt-in pipeline e2e suite drives real npm install/build, Vite preview, Playwright screenshots, interaction scenarios, and a deterministic failed-then-repaired notes run without spending API quota.
+- `npm test`：默认离线测试套件；
+- `npm run test:console:e2e`：使用 stub pipeline 在桌面与窄屏视口驱动浏览器工作台；
+- `VIBE_ONE_E2E=1 npm test`：执行真实 npm install/build、Vite preview、Playwright 截图、交互场景、功能修复和视觉修复，不消耗 API 配额。
 
-Each real run writes to `runs/<target>-<timestamp>/`:
+## 运行产物
 
-| artifact | meaning |
+每次真实运行写入 `runs/<target>-<timestamp>/`：
+
+| 产物 | 含义 |
 | --- | --- |
-| `SPEC.generated.md` / `PLAN.generated.md` | planned pages, content checks, and scenarios |
-| `references/manifest.json` | sanitized reference metadata; image bytes are stored as files, never base64 |
-| `app/` | generated runnable app |
-| `logs/` | command output and structured `events.jsonl` |
-| `screenshots/` | page and post-interaction captures |
-| `visual/comparisons.json` | per-round local score, structure/color subscores, threshold, mapping, and pass/fail evidence |
-| `DELIVERY_REPORT.md` | commands, checks, repair rounds, usage, and final status |
+| `SPEC.generated.md` / `PLAN.generated.md` | 页面规划、内容检查和交互场景 |
+| `references/manifest.json` | 脱敏后的参考图元数据；图片以文件保存，不保存 base64 |
+| `app/` | 可运行的生成应用 |
+| `logs/` | 命令输出与结构化 `events.jsonl` |
+| `screenshots/` | 页面截图和交互后截图 |
+| `visual/comparisons.json` | 各轮视觉总分、结构/颜色子分、阈值、映射和通过/失败证据 |
+| `DELIVERY_REPORT.md` | 命令、检查项、修复轮次、用量与最终状态 |
 
-## Module map
+## 模块结构
 
 ```text
-src/cli/        entry, status-to-exit-code mapping
-src/console/    local HTTP/SSE API, job history, preview ownership, browser UI
-src/core/       config, run context, pipeline, planner, builder, reviewer, fixer
-src/providers/  single streaming OpenAI-compatible chat provider
-src/runner/     command execution, preview server, Playwright checks
-src/reporter/   DELIVERY_REPORT.md generation
+src/cli/        CLI 入口与状态退出码
+src/console/    本地 HTTP/SSE API、任务历史、预览生命周期与浏览器 UI
+src/core/       配置、运行上下文、pipeline、planner、builder、reviewer、fixer
+src/providers/  单一 OpenAI-compatible 流式 Chat provider
+src/runner/     命令执行、预览服务器与 Playwright 验收
+src/reporter/   DELIVERY_REPORT.md 生成
 ```
 
-## Design rules
+## 设计与安全规则
 
-- The reviewer is mechanical: exit codes, screenshot bytes, visible text, per-page `mustContain` fragments, and end-to-end scenarios.
-- Reference-aware planning uses an OpenAI-compatible multimodal request to produce a structured product/visual spec. Scoring is local and deterministic: SSIM-derived structure plus an RGB histogram score, never model self-grading.
-- The default visual threshold is `0.62`: a coarse layout/palette consistency gate, not a pixel-perfect cloning claim.
-- Success is only claimed when every reviewer check passes.
-- The repair loop is bounded by `maxRepairRounds` and records each diagnosis and patched file.
-- Model output cannot replace `package.json`, Vite config, lockfiles, or npm config; dependencies are whitelisted and install uses `--ignore-scripts`.
-- Model-written paths stay inside the generated app through `safeJoin`.
-- Source files use a delimiter protocol rather than escaped JSON strings.
+- Reviewer 是纯机械验收：退出码、截图字节、可见文本、页面 `mustContain` 片段和端到端交互场景。
+- 存在参考图时，planner 必须为每张上传图片生成合法页面映射，否则任务在构建前失败，禁止静默忽略截图。
+- 视觉评分完全在本地执行：SSIM 派生的结构分与 RGB 直方图颜色分，不使用模型自评。
+- 默认视觉阈值为 `0.62`，表示粗粒度布局与色彩一致性，不承诺像素级复刻。
+- 只有全部 reviewer 检查通过，任务才会标记为成功。
+- 修复循环受 `maxRepairRounds` 限制，并记录每轮诊断、补丁文件、分数和不可变截图证据。
+- 模型不能覆盖 `package.json`、Vite 配置、lockfile 或 npm 配置；依赖使用白名单，安装命令带 `--ignore-scripts`。
+- 模型写入路径通过 `safeJoin` 限制在生成应用目录内。
+- 源文件使用分隔符协议传输，避免把大段代码强制塞进 JSON 转义字符串。
 
-## Status
+## 当前状态与边界
 
-- **Engine:** text-only, screenshot-only, and combined planning; bounded functional repair; deterministic visual comparison; bounded visual repair; reports; and generated-app evidence are implemented.
-- **Console:** the all-Chinese Product Lab workspace supports reference upload, model configuration, session-only credentials, live events, persisted history, reference/result/visual evidence, reports, and generated-app previews.
+- **Engine：** 已支持文字、截图及组合规划、功能修复、确定性视觉比较、有界视觉修复、交付报告和完整证据链。
+- **Console：** 全中文 Product Lab 已支持参考图上传、模型配置、会话级凭证、实时事件、历史回放、参考图/结果图/视觉比较/报告/修复记录和生成应用预览。
 
-Remote hosting, authentication, concurrent jobs, durable credentials, and mid-command cancellation are not part of the local console. The visual gate is intentionally coarse and does not promise pixel-perfect cloning.
+当前阶段只生成响应式 React + Vite Web 产品。本地工作台暂不包含远程托管、身份认证、并发任务、持久化凭证和命令执行中的取消；视觉门禁也不承诺像素级克隆。
