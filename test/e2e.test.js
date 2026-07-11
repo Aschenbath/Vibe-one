@@ -15,9 +15,161 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { loadConfig } from '../src/core/config.js';
 import { runPipeline } from '../src/core/pipeline.js';
 
 const ENABLED = process.env.VIBE_ONE_E2E === '1';
+
+const VISUAL_CSS = `*{box-sizing:border-box}
+html,body,#root{margin:0;min-height:100%;background:#fff;font-family:Arial,sans-serif;color:#111}
+.screen{min-height:844px;background:#fff}
+.hero{height:132px;background:#2457f5;color:#fff;padding:32px 24px}
+.hero h1{margin:0;font-size:28px}
+.card{margin:24px;padding:24px;border-radius:20px;background:#ffb547;font-size:22px;font-weight:700}
+.list{margin:24px;padding:20px;border:1px solid #dce3ef;border-radius:16px}
+.row{height:52px;border-bottom:1px solid #dce3ef;display:flex;align-items:center;justify-content:space-between}
+.row:last-child{border-bottom:0}`;
+
+const WRONG_VISUAL_CSS = `*{box-sizing:border-box}
+html,body,#root{margin:0;min-height:100%;background:#050505;font-family:Arial,sans-serif;color:#ff3344}
+.screen{min-height:844px;background:#050505}
+.hero{height:420px;background:#050505;color:#ff3344;padding:150px 12px 12px;text-align:center}
+.hero h1{margin:0;font-size:42px}
+.card{margin:0;padding:48px 12px;border-radius:0;background:#d40020;color:#050505;font-size:30px;font-weight:700;text-align:center}
+.list{margin:0;padding:8px;border:18px solid #050505;border-radius:0;background:#d40020}
+.row{height:30px;border-bottom:4px solid #050505;display:flex;align-items:center;justify-content:space-between}`;
+
+const VISUAL_MARKUP = `<main class="screen">
+  <section class="hero"><h1>自由职业支出</h1></section>
+  <section class="card">本月支出 ¥4,820</section>
+  <section class="list">
+    <div class="row"><span>办公软件</span><strong>¥1,200</strong></div>
+    <div class="row"><span>交通出行</span><strong>¥320</strong></div>
+    <div class="row"><span>设备采购</span><strong>¥3,300</strong></div>
+  </section>
+</main>`;
+
+const VISUAL_APP = `import React from 'react';
+import './styles.css';
+
+export default function App() {
+  return (
+    <main className="screen">
+      <section className="hero"><h1>自由职业支出</h1></section>
+      <section className="card">本月支出 ¥4,820</section>
+      <section className="list">
+        <div className="row"><span>办公软件</span><strong>¥1,200</strong></div>
+        <div className="row"><span>交通出行</span><strong>¥320</strong></div>
+        <div className="row"><span>设备采购</span><strong>¥3,300</strong></div>
+      </section>
+    </main>
+  );
+}
+`;
+
+const VISUAL_SPEC = {
+  summary: '根据参考图生成的自由职业支出看板。',
+  visualDesign: {
+    layout: '顶部品牌区、月度支出卡片、三行支出列表',
+    palette: ['#2457f5', '#ffb547', '#ffffff'],
+    typography: 'Arial clean sans-serif',
+    spacing: '24px content rhythm',
+    components: ['Hero', 'SummaryCard', 'ExpenseList'],
+    responsive: '390px mobile reference with fluid desktop width',
+  },
+  pages: [{
+    name: 'Home',
+    route: '/',
+    purpose: '展示月度支出概览',
+    mustContain: ['自由职业支出', '本月支出', '办公软件'],
+    referenceImage: 'home.png',
+  }],
+  components: [{ name: 'ExpenseDashboard', usedBy: 'Home' }],
+  dataModel: [{ entity: 'Expense', fields: ['label', 'amount'] }],
+  interactions: [],
+  acceptance: ['页面内容与参考图保持粗粒度视觉一致'],
+  scenarios: [],
+};
+
+function visualAppFiles(css) {
+  return [
+    {
+      path: 'index.html',
+      content: '<!doctype html><html><head><meta charset="UTF-8" /><title>支出看板</title></head><body><div id="root"></div><script type="module" src="/src/main.jsx"></script></body></html>',
+    },
+    {
+      path: 'src/main.jsx',
+      content: "import React from 'react';\nimport { createRoot } from 'react-dom/client';\nimport App from './App.jsx';\ncreateRoot(document.getElementById('root')).render(<App />);\n",
+    },
+    { path: 'src/App.jsx', content: VISUAL_APP },
+    { path: 'src/styles.css', content: css },
+  ];
+}
+
+function fileBlocks(files) {
+  return files.map((file) => `=== FILE: ${file.path}\n${file.content}\n=== END ===`).join('\n');
+}
+
+async function writeVisualReference(targetDir) {
+  const dir = path.join(targetDir, 'input', 'references');
+  await fs.mkdir(dir, { recursive: true });
+  const file = path.join(dir, 'home.png');
+  const { chromium } = await import('playwright');
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    await page.setContent(`<!doctype html><style>${VISUAL_CSS}</style><div id="root">${VISUAL_MARKUP}</div>`);
+    await page.screenshot({ path: file, fullPage: false });
+  } finally {
+    await browser.close();
+  }
+  const bytes = (await fs.stat(file)).size;
+  await fs.writeFile(
+    path.join(dir, 'manifest.json'),
+    JSON.stringify([{
+      name: 'home.png',
+      type: 'image/png',
+      width: 390,
+      height: 844,
+      bytes,
+    }], null, 2),
+  );
+  return file;
+}
+
+function createVisualProvider({ repair = false } = {}) {
+  const usage = { prompt_tokens: 10, completion_tokens: 20 };
+  let chatCalls = 0;
+  return {
+    async chatJson({ user }) {
+      assert.ok(Array.isArray(user), 'planner should receive multimodal content');
+      assert.equal(user.filter((part) => part.type === 'image_url').length, 1);
+      return { json: VISUAL_SPEC, usage, model: 'stub-visual' };
+    },
+    async chat({ user }) {
+      chatCalls += 1;
+      if (chatCalls === 1) {
+        return {
+          content: fileBlocks(visualAppFiles(repair ? WRONG_VISUAL_CSS : VISUAL_CSS)),
+          usage,
+          model: 'stub-visual',
+        };
+      }
+      assert.equal(repair, true, 'only the repair provider should receive a fixer call');
+      assert.ok(Array.isArray(user), 'visual fixer should receive multimodal content');
+      assert.equal(user.filter((part) => part.type === 'image_url').length, 2);
+      return {
+        content: `=== DIAGNOSIS ===
+Restored the blue and amber reference palette and its original spacing.
+=== FILE: src/styles.css
+${VISUAL_CSS}
+=== END ===`,
+        usage,
+        model: 'stub-visual',
+      };
+    },
+  };
+}
 
 // A minimal but genuinely runnable React + Vite app that satisfies the spec below.
 const APP_FILES = [
@@ -244,6 +396,76 @@ test('repair loop fixes a broken notes app and reaches success', { skip: !ENABLE
   const shots = await fs.readdir(path.join(result.runDir, 'screenshots'));
   assert.ok(shots.some((f) => f.startsWith('scenario-') && f.endsWith('.png')));
 
+  await fs.rm(tmpRoot, { recursive: true, force: true });
+});
+
+test('visual reference passes on round zero with deterministic local scoring', { skip: !ENABLED, timeout: 300_000 }, async () => {
+  const tmpRoot = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-one-visual-pass-')));
+  const targetDir = path.join(tmpRoot, 'visual-pass');
+  await fs.mkdir(path.join(targetDir, 'input'), { recursive: true });
+  await fs.writeFile(path.join(targetDir, 'input', 'brief.md'), '# 支出看板\n根据参考图生成响应式页面。\n');
+  await writeVisualReference(targetDir);
+  const loaded = await loadConfig(targetDir, { apiKey: 'stub-visual-key' });
+  const config = {
+    ...loaded,
+    model: 'stub-visual',
+    baseUrl: 'http://stub.local/v1',
+    maxRepairRounds: 0,
+    visualThreshold: 0.62,
+    runsRoot: path.join(tmpRoot, 'runs'),
+  };
+
+  const result = await runPipeline({
+    targetDir,
+    config,
+    provider: createVisualProvider(),
+  });
+
+  assert.equal(result.status, 'success');
+  const history = JSON.parse(
+    await fs.readFile(path.join(result.runDir, 'visual', 'comparisons.json'), 'utf8'),
+  );
+  assert.equal(history.length, 1);
+  assert.equal(history[0].round, 0);
+  assert.equal(history[0].results[0].pass, true);
+  assert.ok(history[0].results[0].score >= 0.62, JSON.stringify(history[0].results[0]));
+  await fs.rm(tmpRoot, { recursive: true, force: true });
+});
+
+test('visual failure sends both images to the fixer and passes after one repair', { skip: !ENABLED, timeout: 300_000 }, async () => {
+  const tmpRoot = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-one-visual-repair-')));
+  const targetDir = path.join(tmpRoot, 'visual-repair');
+  await fs.mkdir(path.join(targetDir, 'input'), { recursive: true });
+  await fs.writeFile(path.join(targetDir, 'input', 'brief.md'), '# 支出看板\n先生成后按参考图修复视觉。\n');
+  await writeVisualReference(targetDir);
+  const loaded = await loadConfig(targetDir, { apiKey: 'stub-visual-key' });
+  const config = {
+    ...loaded,
+    model: 'stub-visual-repair',
+    baseUrl: 'http://stub.local/v1',
+    maxRepairRounds: 1,
+    visualThreshold: 0.62,
+    runsRoot: path.join(tmpRoot, 'runs'),
+  };
+
+  const result = await runPipeline({
+    targetDir,
+    config,
+    provider: createVisualProvider({ repair: true }),
+  });
+
+  assert.equal(result.status, 'success');
+  const history = JSON.parse(
+    await fs.readFile(path.join(result.runDir, 'visual', 'comparisons.json'), 'utf8'),
+  );
+  assert.equal(history.length, 2);
+  assert.equal(history[0].results[0].pass, false);
+  assert.equal(history[1].results[0].pass, true);
+  assert.ok(history[1].results[0].score > history[0].results[0].score);
+  const report = await fs.readFile(path.join(result.runDir, 'DELIVERY_REPORT.md'), 'utf8');
+  assert.match(report, /### Round 0/);
+  assert.match(report, /### Round 1/);
+  assert.match(report, /Restored the blue and amber reference palette/i);
   await fs.rm(tmpRoot, { recursive: true, force: true });
 });
 

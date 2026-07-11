@@ -3,6 +3,10 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { runPipeline } from '../core/pipeline.js';
 import { loadConfig } from '../core/config.js';
+import {
+  normalizeReferencePayloads,
+  writeReferencePayloads,
+} from '../core/referenceImages.js';
 import { ConsoleError } from './errors.js';
 
 const TERMINAL = new Set(['success', 'failed', 'planned']);
@@ -34,9 +38,21 @@ export function createJobManager({ runsRoot, pipeline = runPipeline, load = load
     if (activeJobId) throw new ConsoleError('JOB_ACTIVE', 'Another job is already running.', 409);
 
     const brief = String(input.brief ?? '').trim();
-    if (!brief) throw new ConsoleError('BRIEF_REQUIRED', 'Describe the app before starting.', 422);
     if (brief.length > 100_000) {
       throw new ConsoleError('BRIEF_TOO_LARGE', 'Briefs are limited to 100,000 characters.', 413);
+    }
+    let references;
+    try {
+      references = normalizeReferencePayloads(input.references ?? []);
+    } catch (error) {
+      throw new ConsoleError(
+        error.code || 'REFERENCE_INVALID',
+        error.message.replace(/^[A-Z_]+:\s*/, ''),
+        422,
+      );
+    }
+    if (!brief && references.length === 0) {
+      throw new ConsoleError('INPUT_REQUIRED', '请填写需求描述或上传至少一张参考图。', 422);
     }
 
     const mode = input.mode === 'plan' ? 'plan' : input.mode === 'run' ? 'run' : null;
@@ -52,7 +68,10 @@ export function createJobManager({ runsRoot, pipeline = runPipeline, load = load
     const model = String(input.model || session.model || env.VIBE_ONE_MODEL || 'gpt-4o-mini');
 
     await fs.mkdir(path.join(targetDir, 'input'), { recursive: true });
-    await fs.writeFile(path.join(targetDir, 'input', 'brief.md'), brief, 'utf8');
+    if (brief) {
+      await fs.writeFile(path.join(targetDir, 'input', 'brief.md'), brief, 'utf8');
+    }
+    await writeReferencePayloads(path.join(targetDir, 'input'), references);
     await fs.writeFile(
       path.join(targetDir, 'input', 'constraints.json'),
       JSON.stringify({ model, baseUrl }, null, 2),
@@ -65,6 +84,9 @@ export function createJobManager({ runsRoot, pipeline = runPipeline, load = load
       mode,
       model,
       baseUrl,
+      references: references.map((reference) => reference.name),
+      referenceCount: references.length,
+      inputMode: brief && references.length ? 'text+images' : references.length ? 'images' : 'text',
       status: 'queued',
       stage: 'queued',
       createdAt: new Date().toISOString(),
@@ -109,6 +131,7 @@ export function createJobManager({ runsRoot, pipeline = runPipeline, load = load
       type: String(event.type || 'event'),
       summary: sanitize(event.summary, job.secret),
       ...(event.name ? { name: sanitize(event.name, job.secret) } : {}),
+      ...(event.code ? { code: sanitize(event.code, job.secret) } : {}),
     };
     job.events.push(clean);
     job.stage = stageForEvent(clean.type, job.stage);
@@ -153,6 +176,7 @@ function stageForEvent(type, current) {
   if (type.startsWith('plan:')) return 'planning';
   if (type.startsWith('build:')) return 'building';
   if (type.startsWith('fix:') || type.startsWith('repair:')) return 'repairing';
+  if (type === 'visual:compare') return 'visual';
   if (['cmd:start', 'cmd:done', 'preview:start', 'preview:ready', 'screenshot', 'scenario', 'review'].includes(type)) {
     return 'verifying';
   }
@@ -167,6 +191,9 @@ function publicJob(job, includeEvents = false) {
     mode: job.mode,
     model: job.model,
     baseUrl: job.baseUrl,
+    references: [...job.references],
+    referenceCount: job.referenceCount,
+    inputMode: job.inputMode,
     status: job.status,
     stage: job.stage,
     createdAt: job.createdAt,

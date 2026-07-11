@@ -14,7 +14,7 @@
     "console": "node src/console/index.js",
     "demo:expense": "node src/cli/index.js run examples/expense-mobile",
     "demo:notes": "node src/cli/index.js run examples/notes-mobile",
-    "test": "node --test test/console.test.js test/console-e2e.test.js test/core.test.js test/e2e.test.js",
+    "test": "node --test test/console.test.js test/console-e2e.test.js test/core.test.js test/e2e.test.js test/visual.test.js",
     "test:console:e2e": "node scripts/run-console-e2e.js"
   },
   "devDependencies": {

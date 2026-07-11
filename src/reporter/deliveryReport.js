@@ -2,7 +2,17 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-export async function writeReport(ctx, { config, spec, status, rounds, finalReview, shots, scenarioResults, error }) {
+export async function writeReport(ctx, {
+  config,
+  spec,
+  status,
+  rounds,
+  finalReview,
+  shots,
+  scenarioResults,
+  visualHistory = [],
+  error,
+}) {
   const cmdEvents = ctx.events.filter((e) => e.type === 'cmd:done');
   const fixEvents = ctx.events.filter((e) => e.type === 'fix:applied');
 
@@ -16,6 +26,13 @@ export async function writeReport(ctx, { config, spec, status, rounds, finalRevi
     '',
     '## Input summary', '',
     (spec?.summary ?? '(planner did not run)'), '',
+    '## Input references', '',
+    ...((config.references ?? []).length
+      ? config.references.map(
+        (reference) => `- \`${reference.name}\` (${reference.width}x${reference.height}, ${reference.type})`,
+      )
+      : ['(none)']),
+    '',
     '## Commands executed', '',
     '| step | command | exit | duration |',
     '| --- | --- | --- | --- |',
@@ -38,10 +55,22 @@ export async function writeReport(ctx, { config, spec, status, rounds, finalRevi
     '## Screenshots', '',
     ...((shots ?? []).map((s) => `- ${s.page}: \`screenshots/${path.basename(s.file)}\` (${s.bytes} bytes)`)),
     '',
+    '## Visual comparison history', '',
+    ...(visualHistory.length
+      ? visualHistory.flatMap(({ round, results }) => [
+        `### Round ${round}`,
+        '',
+        ...((results ?? []).length
+          ? results.map(
+            (result) => `- [${result.pass ? 'x' : ' '}] ${result.page}: ${formatScore(result.score)} / ${formatScore(result.threshold)} (structure ${formatScore(result.structure)}, color ${formatScore(result.color)})`,
+          )
+          : ['(no mapped references)']),
+        '',
+      ])
+      : ['(no visual comparisons executed)', '']),
     ...(error ? ['## Fatal error', '', '```', String(error), '```', ''] : []),
     '## Known gaps', '',
     '- Mock data only, no backend.',
-    '- Visual similarity to any reference is not scored in MVP.',
     '',
   ];
 
@@ -49,4 +78,8 @@ export async function writeReport(ctx, { config, spec, status, rounds, finalRevi
   await fs.writeFile(file, lines.join('\n'), 'utf8');
   await ctx.logEvent('report:written', { summary: file });
   return file;
+}
+
+function formatScore(value) {
+  return Number.isFinite(Number(value)) ? Number(value).toFixed(4) : 'n/a';
 }

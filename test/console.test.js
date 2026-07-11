@@ -3,10 +3,32 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { loadConfig } from '../src/core/config.js';
 import { createJobManager } from '../src/console/jobManager.js';
 import { createRunStore } from '../src/console/runStore.js';
 import { createPreviewManager } from '../src/console/previewManager.js';
 import { createConsoleServer } from '../src/console/server.js';
+
+const ONE_PIXEL_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+  'base64',
+);
+
+function createLargeSyntheticPng(bytes = 1_100_000) {
+  const buffer = Buffer.alloc(bytes);
+  ONE_PIXEL_PNG.copy(buffer, 0, 0, 24);
+  return buffer;
+}
+
+async function waitForTerminalJob(baseUrl, id) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const response = await fetch(`${baseUrl}api/jobs/${encodeURIComponent(id)}`);
+    const job = await response.json();
+    if (job.terminal) return job;
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  throw new Error(`job did not reach a terminal state: ${id}`);
+}
 
 test('session status exposes key presence but never the key', () => {
   const manager = createJobManager({ runsRoot: path.join(os.tmpdir(), 'vibe-console-status'), pipeline: async () => {} });
@@ -55,11 +77,100 @@ test('a job streams stages and rejects concurrent starts', async () => {
   await fs.rm(root, { recursive: true, force: true });
 });
 
+test('a screenshot-only job persists references without exposing base64, paths, or secrets', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-reference-'));
+  let loaded;
+  const manager = createJobManager({
+    runsRoot: root,
+    env: { VIBE_ONE_API_KEY: 'secret-key' },
+    load: async (targetDir, overrides) => {
+      loaded = await loadConfig(targetDir, overrides);
+      return { ...loaded, model: 'stub', baseUrl: 'local' };
+    },
+    pipeline: async ({ config }) => ({
+      runId: 'run-1',
+      runDir: path.join(root, 'run-1'),
+      status: config.references.length ? 'planned' : 'failed',
+    }),
+  });
+  const payload = {
+    name: 'home.png',
+    type: 'image/png',
+    width: 1,
+    height: 1,
+    base64: ONE_PIXEL_PNG.toString('base64'),
+  };
+
+  try {
+    const job = await manager.startJob({
+      title: 'Screenshot clone',
+      brief: '',
+      references: [payload],
+      mode: 'plan',
+    });
+    await manager.waitForJob(job.id);
+    const publicJob = manager.getJob(job.id);
+    const serialized = JSON.stringify(publicJob);
+
+    assert.equal(publicJob.referenceCount, 1);
+    assert.deepEqual(publicJob.references, ['home.png']);
+    assert.equal(publicJob.inputMode, 'images');
+    assert.doesNotMatch(serialized, /secret-key|iVBOR|vibe-console-reference-/);
+    assert.equal(loaded.references.length, 1);
+    assert.equal(loaded.references[0].name, 'home.png');
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('visual comparison events expose a visual stage and sanitized error code', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-visual-stage-'));
+  let release;
+  let markVisual;
+  const visualReady = new Promise((resolve) => {
+    markVisual = resolve;
+  });
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const manager = createJobManager({
+    runsRoot: root,
+    env: { VIBE_ONE_API_KEY: 'visual-stage-secret' },
+    pipeline: async ({ config }) => {
+      config.onEvent({
+        type: 'visual:compare',
+        code: 'VISUAL_LOW',
+        summary: 'visual-stage-secret score below threshold',
+      });
+      markVisual();
+      await gate;
+      return { runId: 'run-visual', runDir: path.join(root, 'run-visual'), status: 'failed' };
+    },
+  });
+
+  try {
+    const job = await manager.startJob({ brief: '# Visual app', mode: 'run' });
+    await visualReady;
+    const live = manager.getJob(job.id);
+
+    assert.equal(live.stage, 'visual');
+    assert.equal(live.events[0].code, 'VISUAL_LOW');
+    assert.doesNotMatch(JSON.stringify(live), /visual-stage-secret/);
+    release();
+    await manager.waitForJob(job.id);
+  } finally {
+    release?.();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test('run store reconstructs evidence and rejects traversal', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-run-store-'));
   const runDir = path.join(root, 'demo-2026-07-10T12-00-00');
   await fs.mkdir(path.join(runDir, 'logs'), { recursive: true });
   await fs.mkdir(path.join(runDir, 'screenshots'), { recursive: true });
+  await fs.mkdir(path.join(runDir, 'references'), { recursive: true });
+  await fs.mkdir(path.join(runDir, 'visual'), { recursive: true });
   await fs.mkdir(path.join(runDir, 'app'), { recursive: true });
   await fs.writeFile(
     path.join(runDir, 'logs', 'events.jsonl'),
@@ -70,6 +181,34 @@ test('run store reconstructs evidence and rejects traversal', async () => {
     '# Delivery Report\n- Status: **success**\n- Model: demo @ local\n',
   );
   await fs.writeFile(path.join(runDir, 'screenshots', 'home.png'), 'png');
+  await fs.writeFile(path.join(runDir, 'screenshots', 'visual-home.png'), ONE_PIXEL_PNG);
+  await fs.writeFile(path.join(runDir, 'references', 'home.png'), ONE_PIXEL_PNG);
+  await fs.writeFile(
+    path.join(runDir, 'references', 'manifest.json'),
+    JSON.stringify([{
+      name: 'home.png',
+      type: 'image/png',
+      width: 1,
+      height: 1,
+      bytes: ONE_PIXEL_PNG.length,
+    }]),
+  );
+  await fs.writeFile(
+    path.join(runDir, 'visual', 'comparisons.json'),
+    JSON.stringify([{
+      round: 0,
+      results: [{
+        page: '首页',
+        referenceImage: 'home.png',
+        actualImage: 'visual-home.png',
+        score: 0.8,
+        structure: 0.8,
+        color: 0.8,
+        threshold: 0.62,
+        pass: true,
+      }],
+    }]),
+  );
 
   const store = createRunStore(root);
   const [summary] = await store.listRuns();
@@ -79,12 +218,68 @@ test('run store reconstructs evidence and rejects traversal', async () => {
   assert.equal(summary.status, 'success');
   assert.equal(summary.repairCount, 1);
   assert.equal(summary.previewEligible, true);
-  assert.deepEqual(detail.screenshots, ['home.png']);
+  assert.deepEqual(detail.screenshots, ['home.png', 'visual-home.png']);
+  assert.deepEqual(detail.references.map((item) => item.name), ['home.png']);
+  assert.equal(detail.visualComparisons[0].results[0].score, 0.8);
   assert.equal(Object.hasOwn(detail, 'runDir'), false);
+  assert.equal(JSON.stringify(detail).includes(root), false);
   assert.equal((await store.getPreviewTarget(summary.id)).appDir, path.join(runDir, 'app'));
+  const reference = await store.readReference(summary.id, 'home.png');
+  assert.equal(reference.type, 'image/png');
+  assert.deepEqual(reference.data, ONE_PIXEL_PNG);
   await assert.rejects(store.readScreenshot(summary.id, '../DELIVERY_REPORT.md'), /outside/i);
+  await assert.rejects(store.readReference(summary.id, '../home.png'), /outside|invalid/i);
 
   await fs.rm(root, { recursive: true, force: true });
+});
+
+test('HTTP API serves jailed reference images and visual comparison history', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-artifacts-'));
+  const runsRoot = path.join(root, 'runs');
+  const runId = 'visual-run-2026-07-10T12-00-00';
+  const runDir = path.join(runsRoot, runId);
+  await fs.mkdir(path.join(runDir, 'references'), { recursive: true });
+  await fs.mkdir(path.join(runDir, 'visual'), { recursive: true });
+  await fs.writeFile(path.join(runDir, 'DELIVERY_REPORT.md'), '# Delivery Report\n- Status: **success**\n');
+  await fs.writeFile(path.join(runDir, 'references', 'home.png'), ONE_PIXEL_PNG);
+  await fs.writeFile(
+    path.join(runDir, 'references', 'manifest.json'),
+    JSON.stringify([{
+      name: 'home.png',
+      type: 'image/png',
+      width: 1,
+      height: 1,
+      bytes: ONE_PIXEL_PNG.length,
+    }]),
+  );
+  await fs.writeFile(
+    path.join(runDir, 'visual', 'comparisons.json'),
+    JSON.stringify([{ round: 0, results: [{ page: '首页', score: 0.8, pass: true }] }]),
+  );
+  const app = createConsoleServer({ runsRoot, env: {} });
+  const address = await app.listen(0);
+
+  try {
+    const referenceResponse = await fetch(
+      `${address.url}api/jobs/${encodeURIComponent(runId)}/references/home.png`,
+    );
+    assert.equal(referenceResponse.status, 200);
+    assert.equal(referenceResponse.headers.get('content-type'), 'image/png');
+    assert.deepEqual(Buffer.from(await referenceResponse.arrayBuffer()), ONE_PIXEL_PNG);
+
+    const visualResponse = await fetch(
+      `${address.url}api/jobs/${encodeURIComponent(runId)}/visual`,
+    );
+    assert.equal(visualResponse.status, 200);
+    assert.equal((await visualResponse.json())[0].results[0].score, 0.8);
+
+    const jobResponse = await fetch(`${address.url}api/jobs/${encodeURIComponent(runId)}`);
+    const jobText = await jobResponse.text();
+    assert.doesNotMatch(jobText, /vibe-console-artifacts-|AppData|\\Temp\\/i);
+  } finally {
+    await app.close();
+    await fs.rm(root, { recursive: true, force: true });
+  }
 });
 
 test('preview manager reuses one preview and stops it on replacement', async () => {
@@ -129,11 +324,62 @@ test('HTTP API configures a session and starts a job without exposing the key', 
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ title: 'Demo', brief: '# Demo', mode: 'plan' }),
   });
+  const jobBody = await jobResponse.text();
+  const job = JSON.parse(jobBody);
   assert.equal(jobResponse.status, 202);
-  assert.equal((await jobResponse.text()).includes('http-secret'), false);
+  assert.equal(jobBody.includes('http-secret'), false);
+  await waitForTerminalJob(address.url, job.id);
 
   await app.close();
   await fs.rm(root, { recursive: true, force: true });
+});
+
+test('HTTP job creation accepts screenshot-only payloads above the default JSON limit safely', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-http-reference-'));
+  const pipeline = async ({ config }) => ({
+    runId: 'run-reference',
+    runDir: path.join(root, 'runs', 'run-reference'),
+    status: config.references.length ? 'planned' : 'failed',
+  });
+  const app = createConsoleServer({ runsRoot: path.join(root, 'runs'), pipeline, env: {} });
+  const address = await app.listen(0);
+  const image = createLargeSyntheticPng();
+
+  try {
+    await fetch(`${address.url}api/session/config`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ apiKey: 'http-reference-secret' }),
+    });
+    const response = await fetch(`${address.url}api/jobs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        title: 'Screenshot only',
+        brief: '',
+        mode: 'plan',
+        references: [{
+          name: 'home.png',
+          type: 'image/png',
+          width: 1,
+          height: 1,
+          base64: image.toString('base64'),
+        }],
+      }),
+    });
+    const body = await response.text();
+    const job = JSON.parse(body);
+
+    assert.equal(response.status, 202);
+    assert.deepEqual(job.references, ['home.png']);
+    assert.equal(job.referenceCount, 1);
+    assert.equal(job.inputMode, 'images');
+    assert.doesNotMatch(body, /http-reference-secret|iVBOR|vibe-console-http-reference-/);
+    await waitForTerminalJob(address.url, job.id);
+  } finally {
+    await app.close();
+    await fs.rm(root, { recursive: true, force: true });
+  }
 });
 
 test('HTTP API returns structured validation errors', async () => {
@@ -149,7 +395,7 @@ test('HTTP API returns structured validation errors', async () => {
 
   assert.equal(response.status, 422);
   assert.deepEqual(await response.json(), {
-    error: { code: 'BRIEF_REQUIRED', message: 'Describe the app before starting.' },
+    error: { code: 'INPUT_REQUIRED', message: '请填写需求描述或上传至少一张参考图。' },
   });
 
   await app.close();
@@ -181,12 +427,60 @@ test('console page exposes the complete operational workflow', async () => {
   const html = await response.text();
 
   assert.equal(response.status, 200);
+  assert.match(html, /<html lang="zh-CN">/);
+  assert.match(html, /你想做什么产品？/);
+  assert.match(html, /参考截图/);
+  assert.match(html, /开始生成/);
+  assert.match(html, /运行设置/);
+  assert.match(html, /理解需求/);
+  assert.match(html, /视觉校验/);
+  assert.match(html, /交付证据/);
   assert.match(html, /id="brief"/);
   assert.match(html, /id="launch-run"/);
   assert.match(html, /id="run-history"/);
   assert.match(html, /id="event-log"/);
-  assert.match(html, /id="evidence-pane"/);
   assert.match(html, /id="preview-frame"/);
+  assert.match(html, /id="history-drawer"/);
+  assert.match(html, /id="reference-input"/);
+  assert.match(html, /id="reference-list"/);
+  assert.match(html, /id="settings-drawer"/);
+  assert.match(html, /id="flow-workspace"/);
+  assert.match(html, /id="visual-comparisons"/);
+  assert.match(html, /<aside[^>]*id="history-drawer"[^>]*class="history-drawer"[^>]*aria-label="生成历史"/);
+  assert.match(html, /<button[^>]*id="history-toggle"[^>]*aria-expanded="false"[^>]*aria-controls="history-panel"[^>]*>展开历史<\/button>/);
+  assert.match(html, /<nav[^>]*id="run-history"[^>]*aria-label="历史任务"/);
+  assert.match(html, /<header class="app-header">/);
+  assert.match(html, /<section[^>]*id="focus-workspace"[^>]*class="focus-workspace"/);
+  assert.match(html, /<section[^>]*id="flow-workspace"[^>]*class="flow-workspace"[^>]*hidden/);
+  assert.match(html, /<form[^>]*id="run-form"[^>]*novalidate/);
+  assert.match(html, /<button[^>]*id="reference-trigger"[^>]*aria-controls="reference-input"[^>]*>\s*<strong>添加参考截图<\/strong>\s*<span>PNG、JPEG 或 WebP，最多 4 张<\/span>\s*<\/button>/);
+  assert.match(html, /<ol[^>]*id="reference-list"[^>]*aria-label="参考截图"[^>]*><\/ol>/);
+  assert.match(html, /<ol[^>]*id="stage-track"[^>]*aria-label="生成阶段"/);
+  assert.match(html, /<ol[^>]*id="event-log"[^>]*aria-live="polite"/);
+  assert.match(html, /<div class="flow-grid">/);
+  assert.match(html, /<section class="activity-panel">/);
+  assert.match(html, /<section[^>]*class="evidence-panel"/);
+  assert.match(html, /<fieldset>\s*<legend>执行方式<\/legend>/);
+  assert.match(html, /<input[^>]*id="api-key"[^>]*type="password"[^>]*autocomplete="off"/);
+  assert.match(html, /<div[^>]*id="toast"[^>]*role="status"[^>]*aria-live="polite"[^>]*hidden/);
+  assert.match(html, /<script type="module" src="\/app\.js"><\/script>/);
+  assert.doesNotMatch(html, /Build from a brief|Launch run|Delivery console/);
+
+  const appSource = await fs.readFile(new URL('../src/console/public/app.js', import.meta.url), 'utf8');
+  for (const [, id] of appSource.matchAll(/getElementById\('([^']+)'\)/g)) {
+    assert.match(html, new RegExp(`id=["']${id}["']`), `app.js selector #${id} must exist in index.html`);
+  }
+  for (const [, id] of appSource.matchAll(/querySelector\('#([^']+)'\)/g)) {
+    assert.match(html, new RegExp(`id=["']${id}["']`), `app.js selector #${id} must exist in index.html`);
+  }
+  assert.doesNotMatch(
+    appSource,
+    /Session key cleared|Starting\.\.\.|Restart preview|Launch preview|No Delivery Report|Loading Delivery Report|Model not loaded|Events will appear|Reconnecting|Select a successful|Verified build|This run does not|Preview becomes available|No screenshots|Generated screenshot|No repair attempts|Repair event|Local server online|Local server unavailable/,
+  );
+
+  const copyResponse = await fetch(`${address.url}copy.js`);
+  assert.equal(copyResponse.status, 200);
+  assert.match(await copyResponse.text(), /理解需求/);
 
   await app.close();
   await fs.rm(root, { recursive: true, force: true });

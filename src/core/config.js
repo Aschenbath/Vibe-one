@@ -2,6 +2,7 @@
 // Precedence: input/constraints.json > environment > defaults.
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { discoverReferenceImages } from './referenceImages.js';
 
 const DEFAULTS = {
   stack: 'react-vite',
@@ -16,17 +17,20 @@ const DEFAULTS = {
   maxNetworkRetries: Number(process.env.VIBE_ONE_MAX_RETRIES) || 6,
   requestTimeoutMs: Number(process.env.VIBE_ONE_REQUEST_TIMEOUT_MS) || 120_000,
   streamRequestTimeoutMs: Number(process.env.VIBE_ONE_STREAM_TIMEOUT_MS) || 600_000,
+  visualThreshold: Number(process.env.VIBE_ONE_VISUAL_THRESHOLD) || 0.62,
 };
 
 export async function loadConfig(targetDir, overrides = {}) {
   const inputDir = path.join(targetDir, 'input');
   const briefPath = path.join(inputDir, 'brief.md');
 
-  let brief;
-  try {
-    brief = await fs.readFile(briefPath, 'utf8');
-  } catch {
-    throw new Error(`missing required input file: ${briefPath}`);
+  const brief = await fs.readFile(briefPath, 'utf8').catch((error) => {
+    if (error.code === 'ENOENT') return '';
+    throw error;
+  });
+  const references = await discoverReferenceImages(inputDir);
+  if (!brief.trim() && references.length === 0) {
+    throw new Error('INPUT_REQUIRED: provide brief text or at least one reference image');
   }
 
   let constraints = {};
@@ -46,6 +50,7 @@ export async function loadConfig(targetDir, overrides = {}) {
     ...constraints,
     apiKey,
     brief,
+    references,
     inputDir,
   };
 }

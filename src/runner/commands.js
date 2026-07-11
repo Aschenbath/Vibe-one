@@ -5,6 +5,10 @@ import fs from 'node:fs/promises';
 import net from 'node:net';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import {
+  compareImageFiles,
+  DEFAULT_VISUAL_THRESHOLD,
+} from './visualCompare.js';
 
 const NPM = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 // Node >= 20.12 refuses to spawn .cmd shims with shell:false (CVE-2024-27980 fix),
@@ -152,6 +156,79 @@ export async function screenshotPages(ctx, baseUrl, pages, viewport) {
     await browser.close();
   }
   return shots;
+}
+
+export async function compareReferencePages(
+  ctx,
+  baseUrl,
+  pages,
+  references,
+  threshold = DEFAULT_VISUAL_THRESHOLD,
+) {
+  const mapped = pages.filter((page) => page.referenceImage);
+  if (!mapped.length) return [];
+  const { chromium } = await import('playwright');
+  const browser = await chromium.launch();
+  const results = [];
+  try {
+    for (const planned of mapped) {
+      const reference = references.find((item) => item.name === planned.referenceImage);
+      if (!reference) {
+        results.push({
+          page: planned.name,
+          referenceImage: planned.referenceImage,
+          pass: false,
+          score: 0,
+          structure: 0,
+          color: 0,
+          threshold,
+          error: 'mapped reference missing',
+        });
+        await ctx.logEvent('visual:compare', {
+          code: 'REFERENCE_MISSING',
+          summary: `${planned.name}: mapped reference missing`,
+        });
+        continue;
+      }
+      const page = await browser.newPage({
+        viewport: { width: reference.width, height: reference.height },
+      });
+      try {
+        const route = planned.route?.startsWith('/')
+          ? planned.route
+          : `/${planned.route ?? ''}`;
+        await page.goto(new URL(route, baseUrl).href, {
+          waitUntil: 'networkidle',
+          timeout: 30_000,
+        });
+        const actualName = `visual-${slug(planned.name)}.png`;
+        const actualFile = path.join(ctx.screenshotsDir, actualName);
+        await page.screenshot({ path: actualFile, fullPage: false });
+        const scores = await compareImageFiles(page, {
+          referenceFile: reference.file,
+          actualFile,
+        });
+        const result = {
+          page: planned.name,
+          route,
+          referenceImage: reference.name,
+          actualImage: actualName,
+          threshold,
+          ...scores,
+          pass: scores.score >= threshold,
+        };
+        results.push(result);
+        await ctx.logEvent('visual:compare', {
+          summary: `${planned.name}: ${scores.score.toFixed(3)} / ${threshold.toFixed(2)}`,
+        });
+      } finally {
+        await page.close();
+      }
+    }
+  } finally {
+    await browser.close();
+  }
+  return results;
 }
 
 // Executes planner-defined interaction scenarios:

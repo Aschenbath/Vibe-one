@@ -10,11 +10,14 @@ import { ConsoleError } from './errors.js';
 import { readJson, sendBuffer, sendError, sendJson, sendText } from './http.js';
 
 const STATIC_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
+const JOB_BODY_LIMIT = 26 * 1024 * 1024;
 const STATIC_FILES = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
   ['/index.html', ['index.html', 'text/html; charset=utf-8']],
   ['/app.css', ['app.css', 'text/css; charset=utf-8']],
   ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
+  ['/copy.js', ['copy.js', 'text/javascript; charset=utf-8']],
+  ['/reference-input.js', ['reference-input.js', 'text/javascript; charset=utf-8']],
 ]);
 
 export function createConsoleServer({
@@ -47,10 +50,14 @@ export function createConsoleServer({
       return sendJson(res, 200, { jobs: await listJobs() });
     }
     if (pathname === '/api/jobs' && req.method === 'POST') {
-      return sendJson(res, 202, await jobs.startJob(await readJson(req)));
+      return sendJson(
+        res,
+        202,
+        await jobs.startJob(await readJson(req, { maxBytes: JOB_BODY_LIMIT })),
+      );
     }
 
-    const match = pathname.match(/^\/api\/jobs\/([^/]+)(?:\/(events|report|preview|screenshots)(?:\/(.+))?)?$/);
+    const match = pathname.match(/^\/api\/jobs\/([^/]+)(?:\/(events|report|preview|screenshots|references|visual)(?:\/(.+))?)?$/);
     if (match) {
       const [, id, resource, name] = match;
       if (!resource && req.method === 'GET') return sendJson(res, 200, await getJob(id));
@@ -60,6 +67,13 @@ export function createConsoleServer({
       }
       if (resource === 'screenshots' && name && req.method === 'GET') {
         return sendBuffer(res, 200, await store.readScreenshot(await artifactId(id), name), 'image/png');
+      }
+      if (resource === 'references' && name && req.method === 'GET') {
+        const reference = await store.readReference(await artifactId(id), name);
+        return sendBuffer(res, 200, reference.data, reference.type);
+      }
+      if (resource === 'visual' && !name && req.method === 'GET') {
+        return sendJson(res, 200, await store.readVisualComparisons(await artifactId(id)));
       }
       if (resource === 'preview' && req.method === 'POST') {
         const target = await store.getPreviewTarget(await artifactId(id));
@@ -183,6 +197,6 @@ function applySecurityHeaders(res) {
   res.setHeader('cross-origin-opener-policy', 'same-origin');
   res.setHeader(
     'content-security-policy',
-    "default-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-src http://127.0.0.1:* http://localhost:*",
+    "default-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; frame-src http://127.0.0.1:* http://localhost:*",
   );
 }

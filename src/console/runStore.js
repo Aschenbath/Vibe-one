@@ -62,6 +62,26 @@ export function createRunStore(runsRoot) {
     }
   }
 
+  async function readReference(id, name) {
+    const dir = jailed(resolveRunDir(id), 'references');
+    const requested = jailed(dir, String(name));
+    const manifest = await readReferences(dir);
+    const item = manifest.find((entry) => entry.name === String(name));
+    if (!item) {
+      throw new ConsoleError('REFERENCE_NOT_FOUND', 'Reference image not found.', 404);
+    }
+    return { data: await fs.readFile(requested), type: item.type };
+  }
+
+  async function readVisualComparisons(id) {
+    const content = await readOptional(
+      jailed(resolveRunDir(id), 'visual', 'comparisons.json'),
+    );
+    if (!content) return [];
+    const value = JSON.parse(content);
+    return Array.isArray(value) ? value : [];
+  }
+
   function resolveRunDir(id) {
     const value = String(id ?? '');
     if (!value || value.startsWith('.')) {
@@ -81,10 +101,12 @@ export function createRunStore(runsRoot) {
     }
     if (!stat.isDirectory()) return null;
 
-    const [report, events, screenshots, appExists] = await Promise.all([
+    const [report, events, screenshots, references, visualComparisons, appExists] = await Promise.all([
       readOptional(path.join(runDir, 'DELIVERY_REPORT.md')),
       readEvents(path.join(runDir, 'logs', 'events.jsonl')),
       readScreenshots(path.join(runDir, 'screenshots')),
+      readReferences(path.join(runDir, 'references')),
+      readVisualComparisons(id),
       directoryExists(path.join(runDir, 'app')),
     ]);
     const status = report.match(/^- Status: \*\*(.+?)\*\*/m)?.[1] ?? inferStatus(events);
@@ -102,6 +124,8 @@ export function createRunStore(runsRoot) {
       completedAt,
       repairCount: events.filter((event) => event.type === 'fix:applied').length,
       screenshots,
+      references,
+      visualComparisons,
       hasReport: Boolean(report),
       previewEligible: status === 'success' && appExists,
       terminal: ['success', 'failed', 'planned'].includes(status),
@@ -109,7 +133,15 @@ export function createRunStore(runsRoot) {
     };
   }
 
-  return { listRuns, getRun, getPreviewTarget, readReport, readScreenshot };
+  return {
+    listRuns,
+    getRun,
+    getPreviewTarget,
+    readReport,
+    readScreenshot,
+    readReference,
+    readVisualComparisons,
+  };
 }
 
 function jailed(root, ...parts) {
@@ -138,7 +170,12 @@ async function readEvents(file) {
     .flatMap((line) => {
       try {
         const event = JSON.parse(line);
-        return [{ ts: event.ts, type: String(event.type || 'event'), summary: String(event.summary ?? '') }];
+        return [{
+          ts: event.ts,
+          type: String(event.type || 'event'),
+          summary: String(event.summary ?? ''),
+          ...(event.code ? { code: String(event.code) } : {}),
+        }];
       } catch {
         return [];
       }
@@ -156,6 +193,20 @@ async function readScreenshots(dir) {
     if (error.code === 'ENOENT') return [];
     throw error;
   }
+}
+
+async function readReferences(dir) {
+  const content = await readOptional(path.join(dir, 'manifest.json'));
+  if (!content) return [];
+  const value = JSON.parse(content);
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => ({
+    name: String(item.name ?? ''),
+    type: String(item.type ?? ''),
+    width: Number(item.width) || 0,
+    height: Number(item.height) || 0,
+    bytes: Number(item.bytes) || 0,
+  }));
 }
 
 async function directoryExists(dir) {

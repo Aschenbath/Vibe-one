@@ -8,18 +8,30 @@ import { BUILDER_SYSTEM, safeJoin } from '../src/core/builder.js';
 import { parseFileBlocks } from '../src/core/builder.js';
 import { createProvider, extractJson, resolveRequestTimeout } from '../src/providers/openaiCompatible.js';
 import { review } from '../src/core/reviewer.js';
-import { describeFailure, gatherSource } from '../src/core/fixer.js';
+import { createFixerUserContent, describeFailure, gatherSource } from '../src/core/fixer.js';
+import { writeReport } from '../src/reporter/deliveryReport.js';
 import { exitCodeForStatus } from '../src/cli/status.js';
 import { createRunContext } from '../src/core/runContext.js';
 import { loadConfig } from '../src/core/config.js';
+import { PLANNER_SYSTEM, createPlannerUserContent } from '../src/core/planner.js';
+import {
+  REFERENCE_LIMITS,
+  normalizeReferencePayloads,
+  writeReferencePayloads,
+  discoverReferenceImages,
+} from '../src/core/referenceImages.js';
 
 const APP = path.resolve('/tmp/run/app');
+const ONE_PIXEL_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+  'base64',
+);
 
 test('package test command is compatible with the Node 20 CI runner', async () => {
   const pkg = JSON.parse(await fs.readFile(new URL('../package.json', import.meta.url), 'utf8'));
   assert.equal(
     pkg.scripts.test,
-    'node --test test/console.test.js test/console-e2e.test.js test/core.test.js test/e2e.test.js',
+    'node --test test/console.test.js test/console-e2e.test.js test/core.test.js test/e2e.test.js test/visual.test.js',
   );
   assert.doesNotMatch(pkg.scripts.test, /[*?]/);
 });
@@ -68,6 +80,102 @@ test('extractJson tolerates markdown fences', () => {
   assert.deepEqual(extractJson('```json\n{"a":1}\n```'), { a: 1 });
   assert.deepEqual(extractJson('{"a":1}'), { a: 1 });
   assert.throws(() => extractJson('not json'));
+});
+
+test('provider preserves OpenAI-compatible multimodal user content', async (t) => {
+  let requestBody;
+  t.mock.method(globalThis, 'fetch', async (_url, options) => {
+    requestBody = JSON.parse(options.body);
+    return new Response(
+      JSON.stringify({ choices: [{ message: { content: '{}' } }] }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    );
+  });
+  const provider = createProvider({
+    model: 'vision-model',
+    baseUrl: 'http://local/v1',
+    apiKey: 'x',
+    temperature: 0,
+    streamResponses: false,
+    maxNetworkRetries: 0,
+  });
+  const content = [
+    { type: 'text', text: 'Clone this UI' },
+    { type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' } },
+  ];
+
+  await provider.chatJson({ system: 'system', user: content });
+
+  assert.deepEqual(requestBody.messages[1].content, content);
+});
+
+test('provider rejects unsupported multimodal parts before sending a request', async (t) => {
+  let calls = 0;
+  t.mock.method(globalThis, 'fetch', async () => {
+    calls += 1;
+    return new Response(JSON.stringify({ choices: [{ message: { content: 'ok' } }] }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  });
+  const provider = createProvider({
+    model: 'vision-model',
+    baseUrl: 'http://local/v1',
+    apiKey: 'x',
+    temperature: 0,
+    streamResponses: false,
+    maxNetworkRetries: 0,
+  });
+
+  await assert.rejects(
+    provider.chat({ user: [{ type: 'input_image', image_url: { url: 'data:image/png;base64,AAAA' } }] }),
+    /unsupported part/,
+  );
+  assert.equal(calls, 0);
+});
+
+test('provider returns a coded error when the upstream rejects visual content', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () => new Response(
+    'image content is not supported by this model',
+    { status: 415 },
+  ));
+  const provider = createProvider({
+    model: 'text-only-model',
+    baseUrl: 'http://local/v1',
+    apiKey: 'x',
+    temperature: 0,
+    streamResponses: false,
+    maxNetworkRetries: 0,
+  });
+
+  await assert.rejects(
+    provider.chat({
+      user: [
+        { type: 'text', text: 'Clone this UI' },
+        { type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' } },
+      ],
+    }),
+    (error) => error.code === 'VISION_UNSUPPORTED',
+  );
+});
+
+test('planner content includes reference images and visual schema instructions', () => {
+  const content = createPlannerUserContent({
+    brief: '做一个记账产品',
+    references: [{
+      name: 'home.png',
+      type: 'image/png',
+      width: 390,
+      height: 844,
+      buffer: ONE_PIXEL_PNG,
+    }],
+  });
+
+  assert.equal(content[0].type, 'text');
+  assert.match(content[0].text, /home\.png.*390x844/s);
+  assert.match(content[1].image_url.url, /^data:image\/png;base64,/);
+  assert.match(PLANNER_SYSTEM, /visualDesign/);
+  assert.match(PLANNER_SYSTEM, /referenceImage/);
 });
 
 test('provider retries transient gateway failures', async (t) => {
@@ -195,6 +303,46 @@ test('review passes only when everything is green', () => {
   assert.equal(missingPage.pass, false);
 });
 
+test('review requires mapped visual comparisons to meet threshold', () => {
+  const spec = {
+    pages: [{ name: 'Home', route: '/', referenceImage: 'home.png' }],
+  };
+  const base = {
+    install: { exitCode: 0 },
+    build: { exitCode: 0 },
+    shots: [okShot],
+    spec,
+    scenarioResults: [],
+  };
+  const fail = review({
+    ...base,
+    visualResults: [{
+      page: 'Home',
+      referenceImage: 'home.png',
+      score: 0.4,
+      structure: 0.5,
+      color: 0.2,
+      threshold: 0.62,
+      pass: false,
+    }],
+  });
+  const pass = review({
+    ...base,
+    visualResults: [{
+      page: 'Home',
+      referenceImage: 'home.png',
+      score: 0.8,
+      structure: 0.8,
+      color: 0.8,
+      threshold: 0.62,
+      pass: true,
+    }],
+  });
+
+  assert.equal(fail.pass, false);
+  assert.equal(pass.pass, true);
+});
+
 test('review enforces mustContain page content', () => {
   const spec = { pages: [{ name: 'Home', route: '/', mustContain: ['本月支出', '¥'] }] };
   const base = { install: { exitCode: 0 }, build: { exitCode: 0 } };
@@ -253,6 +401,80 @@ test('gatherSource collects app source and skips scaffold + node_modules', async
   await fs.rm(dir, { recursive: true, force: true });
 });
 
+test('visual repair content includes diagnostics, reference, and generated screenshot', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-visual-fix-'));
+  const reference = path.join(root, 'reference.png');
+  const actual = path.join(root, 'actual.png');
+  await fs.writeFile(reference, ONE_PIXEL_PNG);
+  await fs.writeFile(actual, ONE_PIXEL_PNG);
+
+  try {
+    const content = await createFixerUserContent({
+      round: 1,
+      failure: 'visual similarity failed',
+      source: '=== FILE: src/App.jsx\nexport default 1\n=== END ===',
+      visualFailures: [{
+        page: 'Home',
+        referenceFile: reference,
+        actualFile: actual,
+        referenceType: 'image/png',
+        score: 0.4,
+        threshold: 0.62,
+      }],
+    });
+
+    assert.equal(content.filter((part) => part.type === 'image_url').length, 2);
+    assert.match(content[0].text, /visual similarity failed/);
+    assert.match(content[1].text, /Home.*0\.4.*0\.62/s);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('delivery report records input references and visual score history', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-visual-report-'));
+  const ctx = {
+    runId: 'visual-run',
+    runDir: root,
+    events: [],
+    usage: { promptTokens: 0, completionTokens: 0, calls: 0 },
+    async logEvent(type, data) {
+      this.events.push({ type, ...data });
+    },
+  };
+  const config = {
+    model: 'stub',
+    baseUrl: 'http://local/v1',
+    stack: 'react-vite',
+    maxRepairRounds: 1,
+    references: [{ name: 'home.png', width: 390, height: 844, type: 'image/png' }],
+  };
+  const visualHistory = [
+    { round: 0, results: [{ page: 'Home', score: 0.54, threshold: 0.62, structure: 0.61, color: 0.3767, pass: false }] },
+    { round: 1, results: [{ page: 'Home', score: 0.7812, threshold: 0.62, structure: 0.79, color: 0.7607, pass: true }] },
+  ];
+
+  await writeReport(ctx, {
+    config,
+    spec: { summary: 'Visual app' },
+    status: 'success',
+    rounds: 1,
+    finalReview: { checks: [] },
+    shots: [],
+    scenarioResults: [],
+    visualHistory,
+    error: null,
+  });
+  const report = await fs.readFile(path.join(root, 'DELIVERY_REPORT.md'), 'utf8');
+
+  assert.match(report, /## Input references/);
+  assert.match(report, /home\.png.*390x844.*image\/png/);
+  assert.match(report, /### Round 0[\s\S]*0\.5400 \/ 0\.6200/);
+  assert.match(report, /### Round 1[\s\S]*0\.7812 \/ 0\.6200/);
+  assert.doesNotMatch(report, /Visual similarity to any reference is not scored/);
+  await fs.rm(root, { recursive: true, force: true });
+});
+
 test('run context mirrors persisted events to an optional listener', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-events-'));
   const seen = [];
@@ -270,6 +492,34 @@ test('run context mirrors persisted events to an optional listener', async () =>
   await fs.rm(root, { recursive: true, force: true });
 });
 
+test('run context copies reference evidence into the run directory', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-run-reference-'));
+  const targetDir = path.join(root, 'target');
+  const inputDir = path.join(targetDir, 'input');
+  const referencesDir = path.join(inputDir, 'references');
+  await fs.mkdir(referencesDir, { recursive: true });
+  await fs.writeFile(path.join(referencesDir, 'home.png'), ONE_PIXEL_PNG);
+  await fs.writeFile(
+    path.join(referencesDir, 'manifest.json'),
+    JSON.stringify([{
+      name: 'home.png',
+      type: 'image/png',
+      width: 1,
+      height: 1,
+      bytes: ONE_PIXEL_PNG.length,
+    }]),
+  );
+
+  const ctx = await createRunContext(targetDir, {
+    runsRoot: path.join(root, 'runs'),
+    inputDir,
+  });
+
+  assert.deepEqual(await fs.readFile(path.join(ctx.referencesDir, 'home.png')), ONE_PIXEL_PNG);
+  assert.equal((await fs.stat(ctx.visualDir)).isDirectory(), true);
+  await fs.rm(root, { recursive: true, force: true });
+});
+
 test('loadConfig accepts an in-memory API key without persisting it', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-config-'));
   await fs.mkdir(path.join(root, 'input'), { recursive: true });
@@ -279,5 +529,82 @@ test('loadConfig accepts an in-memory API key without persisting it', async () =
 
   assert.equal(config.apiKey, 'session-secret');
   assert.doesNotMatch(await fs.readFile(path.join(root, 'input', 'brief.md'), 'utf8'), /session-secret/);
+  await fs.rm(root, { recursive: true, force: true });
+});
+
+test('reference images validate magic bytes, dimensions, names, and limits', () => {
+  const refs = normalizeReferencePayloads([{
+    name: '../Home Screen.PNG',
+    type: 'image/png',
+    width: 1,
+    height: 1,
+    base64: ONE_PIXEL_PNG.toString('base64'),
+  }]);
+  assert.deepEqual(refs.map(({ name, type, width, height }) => ({ name, type, width, height })), [{
+    name: 'home-screen.png', type: 'image/png', width: 1, height: 1,
+  }]);
+  assert.throws(
+    () => normalizeReferencePayloads([{
+      name: 'bad.png',
+      type: 'image/png',
+      width: 1,
+      height: 1,
+      base64: Buffer.from('not-png').toString('base64'),
+    }]),
+    /REFERENCE_INVALID/,
+  );
+  assert.throws(
+    () => normalizeReferencePayloads(Array.from(
+      { length: REFERENCE_LIMITS.maxFiles + 1 },
+      (_, i) => ({
+        name: `${i}.png`,
+        type: 'image/png',
+        width: 1,
+        height: 1,
+        base64: ONE_PIXEL_PNG.toString('base64'),
+      }),
+    )),
+    /REFERENCE_COUNT_EXCEEDED/,
+  );
+});
+
+test('reference images persist and loadConfig accepts screenshot-only input', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-reference-'));
+  await fs.mkdir(path.join(root, 'input'), { recursive: true });
+  const refs = normalizeReferencePayloads([{
+    name: 'home.png',
+    type: 'image/png',
+    width: 1,
+    height: 1,
+    base64: ONE_PIXEL_PNG.toString('base64'),
+  }]);
+  await writeReferencePayloads(path.join(root, 'input'), refs);
+  const discovered = await discoverReferenceImages(path.join(root, 'input'));
+  assert.equal(discovered.length, 1);
+  assert.equal(discovered[0].name, 'home.png');
+  const config = await loadConfig(root, { apiKey: 'session-secret' });
+  assert.equal(config.brief, '');
+  assert.equal(config.references.length, 1);
+  await fs.rm(root, { recursive: true, force: true });
+});
+
+test('reference discovery rejects manifest paths outside the references directory', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-reference-jail-'));
+  const inputDir = path.join(root, 'input');
+  const referencesDir = path.join(inputDir, 'references');
+  await fs.mkdir(referencesDir, { recursive: true });
+  await fs.writeFile(path.join(inputDir, 'outside.png'), ONE_PIXEL_PNG);
+  await fs.writeFile(
+    path.join(referencesDir, 'manifest.json'),
+    JSON.stringify([{
+      name: '../outside.png',
+      type: 'image/png',
+      width: 1,
+      height: 1,
+      bytes: ONE_PIXEL_PNG.length,
+    }]),
+  );
+
+  await assert.rejects(discoverReferenceImages(inputDir), /REFERENCE_PATH_INVALID/);
   await fs.rm(root, { recursive: true, force: true });
 });
