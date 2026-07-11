@@ -1,4 +1,5 @@
 import { STATUS_COPY, ERROR_COPY, EVENT_COPY } from './copy.js';
+import { createReferenceInputController } from './reference-input.js';
 
 const state = {
   status: null,
@@ -24,6 +25,10 @@ const elements = {
   launchRun: document.querySelector('#launch-run'),
   newRun: document.querySelector('#new-run'),
   formMessage: document.querySelector('#form-message'),
+  referenceInput: document.querySelector('#reference-input'),
+  referenceTrigger: document.querySelector('#reference-trigger'),
+  referenceDropzone: document.querySelector('#reference-dropzone'),
+  referenceList: document.querySelector('#reference-list'),
   runHistory: document.querySelector('#run-history'),
   historyCount: document.querySelector('#history-count'),
   connectionDot: document.querySelector('#connection-dot'),
@@ -62,6 +67,15 @@ const elements = {
   historyToggle: document.querySelector('#history-toggle'),
   historyPanel: document.querySelector('#history-panel'),
 };
+
+const referenceInput = createReferenceInputController({
+  input: elements.referenceInput,
+  trigger: elements.referenceTrigger,
+  dropzone: elements.referenceDropzone,
+  list: elements.referenceList,
+  onChange: renderStatus,
+  showError,
+});
 
 async function api(path, options = {}) {
   const headers = { ...options.headers };
@@ -127,6 +141,7 @@ async function launchJob() {
       body: JSON.stringify({
         title: elements.title.value,
         brief: elements.brief.value,
+        references: await referenceInput.payload(),
         mode: document.querySelector('input[name="mode"]:checked').value,
         baseUrl: elements.baseUrl.value.trim(),
         model: elements.model.value.trim(),
@@ -258,6 +273,7 @@ function resetComposer() {
   state.selectedJob = null;
   state.events = [];
   state.previewJobId = null;
+  referenceInput.clear();
   clearError();
   setWorkspaceView('focus');
   render();
@@ -291,7 +307,9 @@ function renderStatus() {
   elements.modelReadout.textContent = job?.model || state.status?.model || '尚未配置模型';
   elements.keyHint.textContent = state.status?.hasApiKey ? '本次会话可用' : '未配置';
   const hasKey = Boolean(elements.apiKey.value.trim() || state.status?.hasApiKey);
-  elements.launchRun.disabled = Boolean(active) || !elements.brief.value.trim() || !hasKey;
+  elements.launchRun.disabled = Boolean(active)
+    || (!elements.brief.value.trim() && !referenceInput.count())
+    || !hasKey;
 }
 
 function renderHistory() {

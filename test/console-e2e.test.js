@@ -9,13 +9,17 @@ import { createConsoleServer } from '../src/console/server.js';
 import { PROJECT_ROOT } from '../src/core/runContext.js';
 
 const ENABLED = process.env.VIBE_ONE_CONSOLE_E2E === '1';
+const ONE_PIXEL_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nWQAAAAASUVORK5CYII=',
+  'base64',
+);
 
 test('console package command is registered', async () => {
   const pkg = JSON.parse(await fs.readFile(path.join(PROJECT_ROOT, 'package.json'), 'utf8'));
   assert.equal(pkg.scripts.console, 'node src/console/index.js');
 });
 
-test('browser console submits a brief and renders live evidence', { skip: !ENABLED, timeout: 60_000 }, async () => {
+test('browser console submits a reference image and renders live evidence', { skip: !ENABLED, timeout: 60_000 }, async () => {
   const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-browser-')));
   const runsRoot = path.join(root, 'runs');
   const artifacts = process.env.VIBE_ONE_CONSOLE_ARTIFACTS || path.join(root, 'artifacts');
@@ -29,7 +33,9 @@ test('browser console submits a brief and renders live evidence', { skip: !ENABL
   const previewAddress = previewServer.address();
   const previewUrl = `http://127.0.0.1:${previewAddress.port}/`;
 
+  let submittedReferences;
   const pipeline = async ({ config, planOnly }) => {
+    submittedReferences = config.references;
     const runId = `console-demo-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}`;
     const runDir = path.join(runsRoot, runId);
     const events = [
@@ -76,9 +82,17 @@ test('browser console submits a brief and renders live evidence', { skip: !ENABL
     await page.getByRole('button', { name: '运行设置' }).click({ timeout: 1_000 });
     await page.getByLabel('会话 API Key').fill('stub-secret');
     await page.getByRole('button', { name: '完成' }).click();
-    await page.getByLabel('需求描述').fill('生成一个简洁的支出追踪产品。');
+    await page.setInputFiles('#reference-input', {
+      name: 'home.png',
+      mimeType: 'image/png',
+      buffer: ONE_PIXEL_PNG,
+    });
+    await page.locator('#reference-list').filter({ hasText: 'home.png' }).waitFor({ timeout: 2_000 });
+    assert.equal(await page.getByLabel('需求描述').inputValue(), '');
     await page.getByRole('button', { name: '开始生成' }).click();
     await page.locator('#active-status').filter({ hasText: '交付完成' }).waitFor();
+    assert.equal(submittedReferences.length, 1);
+    assert.equal(submittedReferences[0].name, 'home.png');
     assert.match(await page.locator('#event-log').innerText(), /正在理解需求与参考图/);
     assert.equal(
       await page.locator('[data-stage="repairing"]').evaluate((element) => element.classList.contains('done')),
@@ -93,7 +107,9 @@ test('browser console submits a brief and renders live evidence', { skip: !ENABL
     await page.getByRole('button', { name: '启动预览' }).click();
     await page.frameLocator('#preview-frame').getByText('Generated preview').waitFor();
 
-    assert.equal((await page.locator('body').innerText()).includes('stub-secret'), false);
+    const bodyText = await page.locator('body').innerText();
+    assert.equal(bodyText.includes('stub-secret'), false);
+    assert.equal(bodyText.includes('iVBOR'), false);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
     await page.screenshot({ path: path.join(artifacts, 'console-desktop.png'), fullPage: true });
 

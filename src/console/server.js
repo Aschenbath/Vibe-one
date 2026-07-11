@@ -17,6 +17,7 @@ const STATIC_FILES = new Map([
   ['/app.css', ['app.css', 'text/css; charset=utf-8']],
   ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
   ['/copy.js', ['copy.js', 'text/javascript; charset=utf-8']],
+  ['/reference-input.js', ['reference-input.js', 'text/javascript; charset=utf-8']],
 ]);
 
 export function createConsoleServer({
@@ -196,6 +197,6 @@ function applySecurityHeaders(res) {
   res.setHeader('cross-origin-opener-policy', 'same-origin');
   res.setHeader(
     'content-security-policy',
-    "default-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-src http://127.0.0.1:* http://localhost:*",
+    "default-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; frame-src http://127.0.0.1:* http://localhost:*",
   );
 }
