@@ -71,19 +71,72 @@ test('product design renders Chinese-first bilingual Markdown', () => {
   const markdown = renderProductDesign(PRODUCT_DESIGN);
 
   assert.match(markdown, /产品类型 \/ Product Type/);
-  assert.match(markdown, /Design Tokens/);
-  assert.match(markdown, /响应式规则 \/ Responsive Rules/);
+  assert.match(markdown, /客服运营主管/);
+  assert.match(markdown, /现代数据工作台，克制可信、信息优先/);
+  assert.match(markdown, /左侧主导航配合顶部任务上下文切换/);
+  assert.match(markdown, /先展示异常、趋势与待处理任务，再提供明细下钻/);
+  assert.match(markdown, /紧凑指标卡/);
+  assert.match(markdown, /首次加载质量概览时/);
+  assert.match(markdown, /窄屏折叠侧栏并纵向排列摘要卡/);
 });
 
-test('product design rejects vague tone and incomplete tokens with a stable code', () => {
+test('product design rejects generic-only tones after Chinese and English normalization', () => {
+  for (const tone of [
+    '现代、简洁、专业、可信',
+    '现代（简洁）专业—可信',
+    ' modern / clean, professional； trustworthy ',
+    '高级，美观，premium beautiful',
+  ]) {
+    assert.throws(
+      () => validateProductDesign({ ...PRODUCT_DESIGN, tone }),
+      (error) => error.code === 'PRODUCT_DESIGN_INVALID',
+      tone,
+    );
+  }
+
+  assert.equal(
+    validateProductDesign({ ...PRODUCT_DESIGN, tone: '现代、简洁，但以风险会话密度和行内处置为核心' }).tone,
+    '现代、简洁，但以风险会话密度和行内处置为核心',
+  );
+});
+
+test('product design requires at least two distinct valid states', () => {
   assert.throws(
-    () => validateProductDesign({ ...PRODUCT_DESIGN, tone: '现代简洁' }),
+    () => validateProductDesign({
+      ...PRODUCT_DESIGN,
+      requiredStates: [
+        { name: 'loading', trigger: '首次加载质量概览时' },
+        { name: 'empty', trigger: '筛选条件没有匹配记录时' },
+        { name: 'loading', trigger: '刷新质量概览时' },
+      ],
+    }),
     (error) => error.code === 'PRODUCT_DESIGN_INVALID',
   );
-  assert.throws(
-    () => validateProductDesign({ ...PRODUCT_DESIGN, tokens: { colors: {} } }),
-    (error) => error.code === 'PRODUCT_DESIGN_INVALID',
-  );
+});
+
+test('product design rejects incomplete lists, states, triggers, and token groups', () => {
+  const invalidCases = [
+    ['empty targetUsers', { targetUsers: [] }],
+    ['short targetUsers', { targetUsers: ['人'] }],
+    ['empty componentLanguage', { componentLanguage: [] }],
+    ['short componentLanguage', { componentLanguage: ['卡'] }],
+    ['empty responsiveRules', { responsiveRules: [] }],
+    ['short responsiveRules', { responsiveRules: ['自适应'] }],
+    ['invalid state', { requiredStates: [{ name: 'idle', trigger: '等待任务开始时' }, PRODUCT_DESIGN.requiredStates[1]] }],
+    ['short trigger', { requiredStates: [{ name: 'loading', trigger: '短' }, PRODUCT_DESIGN.requiredStates[1]] }],
+    ['colors insufficient', { tokens: { ...PRODUCT_DESIGN.tokens, colors: { canvas: '#fff' } } }],
+    ['typography insufficient', { tokens: { ...PRODUCT_DESIGN.tokens, typography: { body: '14px sans-serif' } } }],
+    ['spacing insufficient', { tokens: { ...PRODUCT_DESIGN.tokens, spacing: ['4px'] } }],
+    ['radii insufficient', { tokens: { ...PRODUCT_DESIGN.tokens, radii: ['4px'] } }],
+  ];
+
+  for (const [name, overrides] of invalidCases) {
+    assert.throws(
+      () => validateProductDesign({ ...PRODUCT_DESIGN, ...overrides }),
+      (error) => error.code === 'PRODUCT_DESIGN_INVALID',
+      name,
+    );
+  }
 });
 
 test('package test command is compatible with the Node 20 CI runner', async () => {

@@ -11,7 +11,21 @@ const REQUIRED_LIST_FIELDS = [
   'responsiveRules',
 ];
 const STATE_NAMES = new Set(['loading', 'empty', 'error', 'success']);
-const VAGUE_TONE = /^(?:(?:现代|简洁|modern|clean)[,，/、\s]*)+$/iu;
+const GENERIC_TONE_TOKENS = new Set([
+  '现代',
+  '简洁',
+  '专业',
+  '可信',
+  '高级',
+  '美观',
+  'modern',
+  'clean',
+  'professional',
+  'trustworthy',
+  'premium',
+  'beautiful',
+]);
+const GENERIC_CHINESE_TONE = /(?:现代|简洁|专业|可信|高级|美观)/gu;
 
 export function validateProductDesign(value) {
   if (!isRecord(value)) fail('product design must be an object');
@@ -24,7 +38,7 @@ export function validateProductDesign(value) {
   if (density !== 'compact' && density.length < 8) {
     fail('density incomplete');
   }
-  if (VAGUE_TONE.test(value.tone.trim())) {
+  if (isGenericTone(value.tone)) {
     fail('tone too vague');
   }
 
@@ -95,6 +109,10 @@ function validateStates(states) {
       fail('requiredStates incomplete');
     }
   }
+  const distinctNames = new Set(states.map((state) => state.name));
+  if (distinctNames.size < 2 || distinctNames.size !== states.length) {
+    fail('requiredStates incomplete');
+  }
 }
 
 function requireText(value, minLength, field) {
@@ -108,10 +126,21 @@ function requireStringList(value, field) {
   if (
     !Array.isArray(value)
     || value.length === 0
-    || value.some((item) => typeof item !== 'string' || item.trim().length === 0)
+    || value.some((item) => typeof item !== 'string' || item.trim().length < 4)
   ) {
     fail(`${field} incomplete`);
   }
+}
+
+function isGenericTone(value) {
+  const tokens = value
+    .toLowerCase()
+    .split(/[\p{P}\p{Z}\s]+/u)
+    .filter(Boolean);
+  return tokens.length > 0 && tokens.every((token) => {
+    if (GENERIC_TONE_TOKENS.has(token)) return true;
+    return token.replace(GENERIC_CHINESE_TONE, '') === '';
+  });
 }
 
 function requireTokenRecord(value, minimum, field) {
