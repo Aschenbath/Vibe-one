@@ -303,6 +303,97 @@ test('planner content includes reference images and visual schema instructions',
   assert.match(PLANNER_SYSTEM, /referenceImage/);
 });
 
+test('planner validates product design and writes bilingual artifacts', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-planner-product-design-'));
+  const events = [];
+  const ctx = {
+    runDir: root,
+    logEvent: async (type, data) => events.push({ type, ...data }),
+    addUsage: () => {},
+  };
+  const config = {
+    brief: '构建客服质检运营工作台',
+    references: [],
+    stack: 'react-vite',
+    viewport: { width: 1440, height: 900 },
+    maxRepairRounds: 1,
+  };
+
+  try {
+    const spec = productPlanFixture();
+    const result = await plan(ctx, {
+      chatJson: async () => ({
+        json: spec,
+        usage: { prompt_tokens: 12, completion_tokens: 34 },
+      }),
+    }, config);
+    const [specMd, planMd] = await Promise.all([
+      fs.readFile(path.join(root, 'SPEC.generated.md'), 'utf8'),
+      fs.readFile(path.join(root, 'PLAN.generated.md'), 'utf8'),
+    ]);
+
+    assert.deepEqual(result.productDesign, PRODUCT_DESIGN);
+    assert.match(PLANNER_SYSTEM, /productDesign/);
+    assert.match(PLANNER_SYSTEM, /productType.*targetUsers.*tone.*density.*navigation.*contentStrategy/s);
+    assert.match(PLANNER_SYSTEM, /colors.*typography.*spacing.*radii/s);
+    assert.match(PLANNER_SYSTEM, /componentLanguage.*requiredStates.*responsiveRules/s);
+    assert.match(PLANNER_SYSTEM, /product-specific.*not generic.*modern.*clean/is);
+    assert.match(specMd, /产品设计 \/ Product Design/);
+    assert.match(specMd, /客服运营主管/);
+    assert.match(specMd, /#2457D6/);
+    assert.match(planMd, /验证计划 \/ Verification Plan/);
+    assert.match(planMd, /数据密集型 B2B SaaS/);
+    assert.ok(events.some((event) => event.type === 'design:done'));
+    assert.ok(events.some((event) => event.type === 'plan:done'));
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('planner rejects missing or invalid product design before writing artifacts', async () => {
+  for (const productDesign of [
+    undefined,
+    { ...PRODUCT_DESIGN, tone: '现代简洁' },
+  ]) {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-planner-invalid-design-'));
+    const events = [];
+    const spec = productPlanFixture();
+    if (productDesign === undefined) delete spec.productDesign;
+    else spec.productDesign = productDesign;
+    const ctx = {
+      runDir: root,
+      logEvent: async (type, data) => events.push({ type, ...data }),
+      addUsage: () => {},
+    };
+    const config = {
+      brief: '构建客服质检运营工作台',
+      references: [],
+      stack: 'react-vite',
+      viewport: { width: 1440, height: 900 },
+      maxRepairRounds: 1,
+    };
+
+    try {
+      await assert.rejects(
+        plan(ctx, { chatJson: async () => ({ json: spec }) }, config),
+        (error) => error.code === 'PRODUCT_DESIGN_INVALID',
+      );
+      await assert.rejects(
+        fs.access(path.join(root, 'SPEC.generated.md')),
+        (error) => error.code === 'ENOENT',
+      );
+      await assert.rejects(
+        fs.access(path.join(root, 'PLAN.generated.md')),
+        (error) => error.code === 'ENOENT',
+      );
+      assert.equal(events.some((event) => event.type === 'design:done'), false);
+      assert.equal(events.some((event) => event.type === 'plan:done'), false);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  }
+});
+
 test('planner rejects incomplete or unsafe visual mappings for reference jobs', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-planner-visual-contract-'));
   const reference = {
@@ -400,6 +491,37 @@ function visualDesignFixture() {
     spacing: '16px rhythm',
     components: ['Header'],
     responsive: 'fluid layout',
+  };
+}
+
+function productPlanFixture() {
+  return {
+    summary: '面向客服运营团队的会话质量与风险处置工作台。',
+    visualDesign: visualDesignFixture(),
+    productDesign: PRODUCT_DESIGN,
+    pages: [{
+      name: '质量概览',
+      route: '/',
+      purpose: '定位风险趋势与待处理会话',
+      mustContain: ['质量概览', '待处理会话'],
+      referenceImage: null,
+    }],
+    components: [
+      { name: '风险指标卡', usedBy: '质量概览' },
+      { name: '会话数据表', usedBy: '质量概览' },
+    ],
+    dataModel: [{
+      entity: 'QualityConversation',
+      fields: ['id', 'riskLevel', 'owner', 'status'],
+    }],
+    interactions: ['按风险等级筛选会话', '批量标记复核完成'],
+    acceptance: ['运营人员可以从异常指标下钻到风险会话'],
+    scenarios: [{
+      name: '筛选高风险会话',
+      route: '/',
+      steps: [{ action: 'click', target: '高风险' }],
+      expectText: '待处理会话',
+    }],
   };
 }
 
