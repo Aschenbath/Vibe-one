@@ -99,6 +99,11 @@ test('browser console submits a reference image and renders live evidence', { sk
       false,
     );
 
+    await page.getByRole('tab', { name: '参考图' }).click();
+    const liveReferenceText = await page.locator('#reference-evidence').innerText();
+    assert.match(liveReferenceText, /home\.png/);
+    assert.doesNotMatch(liveReferenceText, /undefined/);
+
     await page.getByRole('tab', { name: '结果截图' }).click();
     await page.locator('#screenshots-grid img').waitFor();
     await page.getByRole('tab', { name: '交付报告' }).click();
@@ -246,6 +251,11 @@ test('browser console reconstructs persisted reference and visual evidence', { s
     { round: 0, results: [{ page: '首页', referenceImage: 'home.png', actualImage: 'home-round-0.png', score: 0.48, structure: 0.52, color: 0.44, threshold: 0.62, pass: false }] },
     { round: 1, results: [{ page: '首页', referenceImage: 'home.png', actualImage: 'home-round-1.png', score: 0.83, structure: 0.86, color: 0.8, threshold: 0.62, pass: true }] },
   ]), 'utf8');
+  const brokenRunId = 'broken-visual-run';
+  const brokenRunDir = path.join(runsRoot, brokenRunId);
+  await fs.mkdir(path.join(brokenRunDir, 'logs'), { recursive: true });
+  await fs.writeFile(path.join(brokenRunDir, 'DELIVERY_REPORT.md'), '# Delivery Report\n- Status: **success**\n', 'utf8');
+  await fs.writeFile(path.join(brokenRunDir, 'logs', 'events.jsonl'), `${JSON.stringify({ ts: '2026-07-11T07:00:00.000Z', type: 'report:written' })}\n`, 'utf8');
 
   const app = createConsoleServer({ runsRoot, env: {} });
   const address = await app.listen(0);
@@ -253,7 +263,7 @@ test('browser console reconstructs persisted reference and visual evidence', { s
 
   async function assertEvidence(page) {
     await page.getByRole('button', { name: '展开历史' }).click();
-    await page.locator('#run-history .history-item').first().click();
+    await page.locator('#run-history .history-item').filter({ hasText: 'visual history run' }).click();
     await page.getByRole('tab', { name: '参考图' }).click();
     await page.locator('#reference-evidence img').waitFor();
     assert.match(await page.locator('#reference-evidence').innerText(), /home\.png.*1×1/);
@@ -281,6 +291,37 @@ test('browser console reconstructs persisted reference and visual evidence', { s
     await assertEvidence(page);
     await page.reload();
     await assertEvidence(page);
+
+    await page.route(`**/api/jobs/${brokenRunId}/visual`, (route) => route.fulfill({
+      status: 500,
+      contentType: 'application/json',
+      body: JSON.stringify({ error: { code: 'INTERNAL_ERROR' } }),
+    }));
+    await page.locator('#run-history .history-item').filter({ hasText: 'broken visual run' }).click();
+    await page.locator('#visual-comparisons').filter({ hasText: '视觉证据加载失败。' }).waitFor();
+    assert.doesNotMatch(await page.locator('#visual-comparisons').innerText(), /第 2 轮|0\.83/);
+
+    let visualRequests = 0;
+    await page.route(`**/api/jobs/${runId}/visual`, async (route) => {
+      visualRequests += 1;
+      if (visualRequests === 1) {
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        return route.fulfill({
+          contentType: 'application/json',
+          body: JSON.stringify([{ round: 0, results: [{ page: '旧响应', referenceImage: 'home.png', actualImage: 'home-round-0.png', score: 0.11, structure: 0.11, color: 0.11, threshold: 0.62, pass: false }] }]),
+        });
+      }
+      return route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify([{ round: 1, results: [{ page: '最新响应', referenceImage: 'home.png', actualImage: 'home-round-1.png', score: 0.83, structure: 0.86, color: 0.8, threshold: 0.62, pass: true }] }]),
+      });
+    });
+    await page.locator('#run-history .history-item').filter({ hasText: 'visual history run' }).click();
+    await page.getByRole('tab', { name: '视觉比较' }).click();
+    await page.locator('#visual-comparisons').filter({ hasText: '最新响应' }).waitFor();
+    await page.waitForTimeout(300);
+    assert.match(await page.locator('#visual-comparisons').innerText(), /最新响应/);
+    assert.doesNotMatch(await page.locator('#visual-comparisons').innerText(), /旧响应/);
   } finally {
     await browser.close();
     await app.close();

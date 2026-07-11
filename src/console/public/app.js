@@ -10,6 +10,7 @@ const state = {
   activeEvidenceTab: 'preview',
   previewJobId: null,
   toastTimer: null,
+  visualRequestSequence: 0,
 };
 
 const elements = {
@@ -311,19 +312,30 @@ function loadReferenceEvidence(job) {
 }
 
 async function loadVisualEvidence(job) {
-  const history = await api(`/api/jobs/${encodeURIComponent(job.id)}/visual`);
-  if (state.selectedJob?.id !== job.id) return;
-  renderVisualComparisons(history, job.id);
+  const requestSequence = ++state.visualRequestSequence;
+  elements.visualComparisons.replaceChildren(createElement('p', 'panel-empty', '正在加载视觉证据…'));
+  try {
+    const history = await api(`/api/jobs/${encodeURIComponent(job.id)}/visual`);
+    if (requestSequence !== state.visualRequestSequence || state.selectedJob?.id !== job.id) return;
+    renderVisualComparisons(history, job.id);
+  } catch (error) {
+    if (requestSequence === state.visualRequestSequence && state.selectedJob?.id === job.id) {
+      elements.visualComparisons.replaceChildren(createElement('p', 'panel-empty', '视觉证据加载失败。'));
+    }
+    throw error;
+  }
 }
 
 function renderReferenceEvidence(references, imageUrl) {
   elements.referenceEvidence.replaceChildren();
   for (const reference of references) {
+    const name = typeof reference === 'string' ? reference : reference.name;
     const card = createElement('article', 'reference-card');
     const image = document.createElement('img');
-    image.src = imageUrl(reference.name);
-    image.alt = `参考图：${reference.name}`;
-    card.append(image, createElement('p', '', `${reference.name} · ${reference.width}×${reference.height}`));
+    image.src = imageUrl(name);
+    image.alt = `参考图：${name}`;
+    const details = typeof reference === 'string' ? name : `${name} · ${reference.width}×${reference.height}`;
+    card.append(image, createElement('p', '', details));
     elements.referenceEvidence.append(card);
   }
 }
