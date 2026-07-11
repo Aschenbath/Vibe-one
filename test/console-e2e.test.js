@@ -17,6 +17,8 @@ const ONE_PIXEL_PNG = Buffer.from(
 test('console package command is registered', async () => {
   const pkg = JSON.parse(await fs.readFile(path.join(PROJECT_ROOT, 'package.json'), 'utf8'));
   assert.equal(pkg.scripts.console, 'node src/console/index.js');
+  const css = await fs.readFile(path.join(PROJECT_ROOT, 'src', 'console', 'public', 'app.css'), 'utf8');
+  assert.match(css, /^\s*--surface: #ffffff;\s*$/m);
 });
 
 test('browser console keeps the Product Lab workspace responsive and accessible', { skip: !ENABLED, timeout: 60_000 }, async () => {
@@ -59,6 +61,11 @@ test('browser console keeps the Product Lab workspace responsive and accessible'
     await mobile.goto(address.url);
     await mobile.getByRole('button', { name: '运行设置' }).click();
     assert.equal(await mobile.locator('#settings-drawer').evaluate((dialog) => dialog.open), true);
+    const modeLabels = mobile.locator('#settings-drawer fieldset label');
+    for (let index = 0; index < await modeLabels.count(); index += 1) {
+      const box = await modeLabels.nth(index).boundingBox();
+      assert.ok(box && box.height >= 44, `settings mode label ${index + 1} is ${box?.height}px tall`);
+    }
     await mobile.getByRole('button', { name: '完成' }).click();
     await mobile.getByRole('button', { name: '展开历史' }).click();
     assert.equal(await mobile.locator('#history-toggle').getAttribute('aria-expanded'), 'true');

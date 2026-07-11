@@ -1,7 +1,7 @@
 :root {
   color-scheme: light;
   --canvas: #f3f6fb;
-  --surface: #fff;
+  --surface: #ffffff;
   --surface-soft: #f8faff;
   --ink: #172033;
   --muted: #667085;
@@ -178,7 +178,7 @@ dialog { color: var(--ink); }
 #settings-drawer form { display: grid; gap: 10px; padding: 28px; }
 #settings-drawer h2 { margin-bottom: 10px; }
 #settings-drawer fieldset { display: grid; gap: 8px; margin: 0 0 8px; padding: 14px; border: 1px solid var(--line); border-radius: var(--radius-sm); }
-#settings-drawer fieldset label { display: flex; align-items: center; gap: 8px; }
+#settings-drawer fieldset label { min-height: 44px; display: flex; align-items: center; gap: 8px; padding: 6px 8px; }
 #settings-drawer input[type='radio'] { width: 18px; min-height: 18px; }
 #key-hint { color: var(--muted); font-size: .72rem; }
 #settings-drawer button[value='close'] { margin-top: 8px; border-color: var(--primary); background: var(--primary); color: white; font-weight: 700; }
