@@ -227,6 +227,67 @@ test('browser reference input reports corrupt images and resets the picker', { s
   }
 });
 
+test('browser console reconstructs persisted reference and visual evidence', { skip: !ENABLED, timeout: 60_000 }, async () => {
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-visual-evidence-')));
+  const runsRoot = path.join(root, 'runs');
+  const runId = 'visual-history-run';
+  const runDir = path.join(runsRoot, runId);
+  await fs.mkdir(path.join(runDir, 'logs'), { recursive: true });
+  await fs.mkdir(path.join(runDir, 'references'), { recursive: true });
+  await fs.mkdir(path.join(runDir, 'screenshots'), { recursive: true });
+  await fs.writeFile(path.join(runDir, 'DELIVERY_REPORT.md'), '# Delivery Report\n- Status: **success**\n', 'utf8');
+  await fs.writeFile(path.join(runDir, 'logs', 'events.jsonl'), `${JSON.stringify({ ts: '2026-07-11T08:00:00.000Z', type: 'report:written' })}\n`, 'utf8');
+  await fs.writeFile(path.join(runDir, 'references', 'home.png'), ONE_PIXEL_PNG);
+  await fs.writeFile(path.join(runDir, 'screenshots', 'home-round-0.png'), ONE_PIXEL_PNG);
+  await fs.writeFile(path.join(runDir, 'screenshots', 'home-round-1.png'), ONE_PIXEL_PNG);
+  await fs.writeFile(path.join(runDir, 'references', 'manifest.json'), JSON.stringify([{ name: 'home.png', type: 'image/png', width: 1, height: 1, bytes: ONE_PIXEL_PNG.length }]), 'utf8');
+  await fs.mkdir(path.join(runDir, 'visual'), { recursive: true });
+  await fs.writeFile(path.join(runDir, 'visual', 'comparisons.json'), JSON.stringify([
+    { round: 0, results: [{ page: '首页', referenceImage: 'home.png', actualImage: 'home-round-0.png', score: 0.48, structure: 0.52, color: 0.44, threshold: 0.62, pass: false }] },
+    { round: 1, results: [{ page: '首页', referenceImage: 'home.png', actualImage: 'home-round-1.png', score: 0.83, structure: 0.86, color: 0.8, threshold: 0.62, pass: true }] },
+  ]), 'utf8');
+
+  const app = createConsoleServer({ runsRoot, env: {} });
+  const address = await app.listen(0);
+  const browser = await chromium.launch();
+
+  async function assertEvidence(page) {
+    await page.getByRole('button', { name: '展开历史' }).click();
+    await page.locator('#run-history .history-item').first().click();
+    await page.getByRole('tab', { name: '参考图' }).click();
+    await page.locator('#reference-evidence img').waitFor();
+    assert.match(await page.locator('#reference-evidence').innerText(), /home\.png.*1×1/);
+    assert.match(await page.locator('#reference-evidence img').getAttribute('src'), /\/references\/home\.png$/);
+
+    await page.getByRole('tab', { name: '视觉比较' }).click();
+    const visual = page.locator('#visual-comparisons');
+    await visual.getByLabel('首页 视觉一致性 0.83').waitFor();
+    const text = await visual.innerText();
+    assert.ok(text.indexOf('第 2 轮') < text.indexOf('第 1 轮'));
+    assert.match(text, /0\.83/);
+    assert.match(text, /结构 0\.86/);
+    assert.match(text, /颜色 0\.80/);
+    assert.match(text, /阈值 0\.62/);
+    assert.match(text, /通过/);
+    assert.match(text, /未通过/);
+    assert.equal(await visual.locator('img').count(), 4);
+    assert.match(await visual.locator('img').nth(1).getAttribute('src'), /\/screenshots\/home-round-1\.png$/);
+    assert.match(await visual.locator('img').nth(3).getAttribute('src'), /\/screenshots\/home-round-0\.png$/);
+  }
+
+  try {
+    const page = await browser.newPage();
+    await page.goto(address.url);
+    await assertEvidence(page);
+    await page.reload();
+    await assertEvidence(page);
+  } finally {
+    await browser.close();
+    await app.close();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test('browser console does not expose unknown server copy', { skip: !ENABLED, timeout: 60_000 }, async () => {
   const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-copy-safety-')));
   const runsRoot = path.join(root, 'runs');

@@ -56,6 +56,8 @@ const elements = {
   previewEmpty: document.querySelector('#preview-empty'),
   previewFrame: document.querySelector('#preview-frame'),
   screenshotsGrid: document.querySelector('#screenshots-grid'),
+  referenceEvidence: document.querySelector('#reference-evidence'),
+  visualComparisons: document.querySelector('#visual-comparisons'),
   reportContent: document.querySelector('#report-content'),
   repairList: document.querySelector('#repair-list'),
   imageDialog: document.querySelector('#image-dialog'),
@@ -197,6 +199,7 @@ async function selectJob(id) {
   elements.previewEmpty.hidden = false;
   upsertJob(job);
   render();
+  loadActiveEvidence(job);
   if (!job.terminal) connectEvents(id);
 }
 
@@ -208,6 +211,7 @@ async function refreshSelectedJob() {
     for (const event of job.events || []) pushEvent(event);
     upsertJob(job);
     render();
+    loadActiveEvidence(job);
     if (state.activeEvidenceTab === 'report' && job.hasReport) await loadReport();
   } catch (error) {
     showToast(error.message);
@@ -290,6 +294,75 @@ function activateTab(name) {
     panel.classList.toggle('active', active);
   }
   if (name === 'report') loadReport();
+  if (state.selectedJob && name === 'references') loadReferenceEvidence(state.selectedJob);
+  if (state.selectedJob && name === 'visual') loadVisualEvidence(state.selectedJob).catch((error) => showToast(error.message));
+}
+
+function loadActiveEvidence(job) {
+  if (state.activeEvidenceTab === 'references') loadReferenceEvidence(job);
+  if (state.activeEvidenceTab === 'visual') loadVisualEvidence(job).catch((error) => showToast(error.message));
+}
+
+function loadReferenceEvidence(job) {
+  renderReferenceEvidence(
+    job.references || [],
+    (name) => `/api/jobs/${encodeURIComponent(job.id)}/references/${encodeURIComponent(name)}`,
+  );
+}
+
+async function loadVisualEvidence(job) {
+  const history = await api(`/api/jobs/${encodeURIComponent(job.id)}/visual`);
+  if (state.selectedJob?.id !== job.id) return;
+  renderVisualComparisons(history, job.id);
+}
+
+function renderReferenceEvidence(references, imageUrl) {
+  elements.referenceEvidence.replaceChildren();
+  for (const reference of references) {
+    const card = createElement('article', 'reference-card');
+    const image = document.createElement('img');
+    image.src = imageUrl(reference.name);
+    image.alt = `参考图：${reference.name}`;
+    card.append(image, createElement('p', '', `${reference.name} · ${reference.width}×${reference.height}`));
+    elements.referenceEvidence.append(card);
+  }
+}
+
+function renderVisualComparisons(history, jobId) {
+  elements.visualComparisons.replaceChildren();
+  for (const round of [...history].sort((a, b) => b.round - a.round)) {
+    const group = createElement('section', 'visual-round');
+    group.append(createElement('h3', '', `第 ${round.round + 1} 轮`));
+    for (const result of round.results || []) {
+      const score = Number(result.score).toFixed(2);
+      const card = createElement('article', 'visual-comparison');
+      card.setAttribute('aria-label', `${result.page} 视觉一致性 ${score}`);
+      card.append(
+        createElement('h4', '', result.page),
+        createElement('strong', result.pass ? 'pass' : 'fail', result.pass ? '通过' : '未通过'),
+      );
+      const images = createElement('div', 'comparison-images');
+      images.append(
+        evidenceImage(`/api/jobs/${encodeURIComponent(jobId)}/references/${encodeURIComponent(result.referenceImage)}`, `${result.page} 参考图`),
+        evidenceImage(`/api/jobs/${encodeURIComponent(jobId)}/screenshots/${encodeURIComponent(result.actualImage)}`, `${result.page} 生成结果`),
+      );
+      card.append(
+        images,
+        createElement('p', 'comparison-score', `一致性 ${score}`),
+        createElement('p', 'comparison-metrics', `结构 ${Number(result.structure).toFixed(2)} · 颜色 ${Number(result.color).toFixed(2)} · 阈值 ${Number(result.threshold).toFixed(2)}`),
+      );
+      group.append(card);
+    }
+    elements.visualComparisons.append(group);
+  }
+}
+
+function evidenceImage(src, alt) {
+  const image = document.createElement('img');
+  image.src = src;
+  image.alt = alt;
+  image.loading = 'lazy';
+  return image;
 }
 
 function render() {
