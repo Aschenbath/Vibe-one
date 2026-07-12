@@ -9,6 +9,11 @@ import {
   compareImageFiles,
   DEFAULT_VISUAL_THRESHOLD,
 } from './visualCompare.js';
+import {
+  UI_VIEWPORTS,
+  auditPageSnapshot,
+  summarizeUiAudit,
+} from './uiQuality.js';
 
 const NPM = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 // Node >= 20.12 refuses to spawn .cmd shims with shell:false (CVE-2024-27980 fix),
@@ -158,6 +163,88 @@ export async function screenshotPages(ctx, baseUrl, pages, viewport) {
   return shots;
 }
 
+export async function collectUiQuality(
+  ctx,
+  baseUrl,
+  pages,
+  requiredStates = [],
+) {
+  const qualityDir = ctx.qualityDir ?? path.join(ctx.runDir, 'quality');
+  await fs.mkdir(qualityDir, { recursive: true });
+  const stateNames = requiredStates
+    .map((state) => typeof state === 'string' ? state : state?.name)
+    .filter(Boolean);
+  const { chromium } = await import('playwright');
+  const browser = await chromium.launch();
+  const results = [];
+
+  try {
+    for (let pageIndex = 0; pageIndex < pages.length; pageIndex += 1) {
+      const pageSpec = pages[pageIndex];
+      for (const [viewportName, viewport] of Object.entries(UI_VIEWPORTS)) {
+        let browserPage;
+        try {
+          browserPage = await browser.newPage({ viewport });
+          const route = pageSpec.route ?? '/';
+          const url = new URL(route, baseUrl).href;
+          await browserPage.goto(url, {
+            waitUntil: 'networkidle',
+            timeout: 30_000,
+          });
+          const snapshot = await browserPage.evaluate(collectDomSnapshot, {
+            pageSpec: { name: pageSpec.name, route },
+            viewportName,
+            requiredStates: stateNames,
+          });
+          const screenshot = [
+            'quality',
+            String(pageIndex + 1),
+            qualitySlug(pageSpec.name),
+            viewportName,
+          ].join('-') + '.png';
+          const screenshotFile = path.join(qualityDir, screenshot);
+          const png = await browserPage.screenshot({
+            path: screenshotFile,
+            type: 'png',
+            fullPage: true,
+          });
+          snapshot.screenshot = {
+            bytes: png.length,
+            width: Math.max(
+              snapshot.document.scrollWidth,
+              snapshot.document.clientWidth,
+            ),
+            height: Math.max(
+              snapshot.document.scrollHeight,
+              snapshot.document.clientHeight,
+            ),
+          };
+          const audited = {
+            ...auditPageSnapshot(snapshot),
+            screenshot,
+          };
+          results.push(audited);
+          if (ctx.logEvent) {
+            await ctx.logEvent('ui:quality', {
+              summary: pageSpec.name + ' ' + viewportName
+                + ': ' + (audited.pass ? 'pass' : audited.failures.length + ' failures'),
+            });
+          }
+        } finally {
+          if (browserPage) await browserPage.close();
+        }
+      }
+    }
+  } finally {
+    await browser.close();
+  }
+
+  return {
+    results,
+    summary: summarizeUiAudit(results, pages),
+  };
+}
+
 export async function compareReferencePages(
   ctx,
   baseUrl,
@@ -276,6 +363,271 @@ export async function runScenarios(ctx, baseUrl, scenarios, viewport) {
   return results;
 }
 
+function collectDomSnapshot({ pageSpec, viewportName, requiredStates }) {
+  const interactiveSelector = [
+    'button',
+    'a[href]',
+    'input',
+    'select',
+    'textarea',
+    '[role="button"]',
+    '[role="link"]',
+  ].join(',');
+
+  function isVisible(element) {
+    if (!(element instanceof Element)) return false;
+    if (element.closest('[hidden],[aria-hidden="true"]')) return false;
+    const style = getComputedStyle(element);
+    const rect = element.getBoundingClientRect();
+    return (
+      style.display !== 'none'
+      && style.visibility !== 'hidden'
+      && Number(style.opacity) > 0
+      && rect.width > 0
+      && rect.height > 0
+    );
+  }
+
+  function isEnabled(element) {
+    return !element.disabled && element.getAttribute('aria-disabled') !== 'true';
+  }
+
+  function label(element) {
+    const text = (
+      element.getAttribute('aria-label')
+      || element.labels?.[0]?.innerText
+      || element.innerText
+      || element.value
+      || element.getAttribute('placeholder')
+      || element.getAttribute('role')
+      || element.tagName.toLowerCase()
+    );
+    return String(text).replace(/\s+/g, ' ').trim().slice(0, 80);
+  }
+
+  function box(element) {
+    const rect = element.getBoundingClientRect();
+    return {
+      left: rect.left,
+      top: rect.top,
+      right: rect.right,
+      bottom: rect.bottom,
+      width: rect.width,
+      height: rect.height,
+    };
+  }
+
+  function parseCssColor(value) {
+    const match = String(value ?? '').match(/^rgba?\(([^)]+)\)$/i);
+    if (!match) return null;
+    const values = match[1]
+      .replace('/', ' ')
+      .split(/[\s,]+/)
+      .filter(Boolean)
+      .map(Number);
+    if (values.length < 3 || values.some((part) => !Number.isFinite(part))) {
+      return null;
+    }
+    return [values[0], values[1], values[2], values[3] ?? 1];
+  }
+
+  function compositeColor(foreground, background) {
+    const alpha = foreground[3];
+    return [
+      foreground[0] * alpha + background[0] * (1 - alpha),
+      foreground[1] * alpha + background[1] * (1 - alpha),
+      foreground[2] * alpha + background[2] * (1 - alpha),
+      1,
+    ];
+  }
+
+  function resolvedBackdrop(element) {
+    const layers = [];
+    for (let current = element.parentElement; current; current = current.parentElement) {
+      const color = parseCssColor(getComputedStyle(current).backgroundColor);
+      if (color && color[3] > 0) layers.push(color);
+    }
+    let result = [255, 255, 255, 1];
+    for (let index = layers.length - 1; index >= 0; index -= 1) {
+      result = compositeColor(layers[index], result);
+    }
+    return 'rgb(' + result.slice(0, 3).map(Math.round).join(', ') + ')';
+  }
+
+  function isStandaloneEmoji(text) {
+    const value = String(text ?? '').trim();
+    return (
+      /\p{Extended_Pictographic}/u.test(value)
+      && /^[\p{Extended_Pictographic}\p{Emoji_Presentation}\uFE0F\u200D\s]+$/u.test(value)
+    );
+  }
+
+  function hasAuthorStyling(element) {
+    if (element.hasAttribute('data-ui-native-styled')) return true;
+    const style = getComputedStyle(element);
+    return (
+      style.appearance === 'none'
+      || style.webkitAppearance === 'none'
+      || Number.parseFloat(style.borderRadius) > 2
+      || style.backgroundImage !== 'none'
+      || Boolean(element.getAttribute('style')?.trim())
+    );
+  }
+
+  const root = document.documentElement;
+  const body = document.body;
+  const documentWidth = Math.max(root.scrollWidth, root.clientWidth, innerWidth);
+  const documentHeight = Math.max(root.scrollHeight, root.clientHeight, innerHeight);
+  const interactiveElements = [...document.querySelectorAll(interactiveSelector)]
+    .filter((element) => isVisible(element) && isEnabled(element))
+    .slice(0, 150);
+  const interactive = interactiveElements.map((element) => {
+    const rect = box(element);
+    return {
+      label: label(element),
+      width: rect.width,
+      height: rect.height,
+    };
+  });
+
+  const critical = [...new Set([
+    ...document.querySelectorAll(
+      'main,[role="main"],nav,[role="navigation"],h1,h2,h3,h4,h5,h6',
+    ),
+    ...interactiveElements,
+  ])].filter(isVisible).slice(0, 150);
+
+  const outOfBounds = [];
+  for (const element of critical) {
+    const rect = box(element);
+    const edges = [];
+    if (rect.left < -0.5) edges.push('left');
+    if (rect.right > innerWidth + 0.5) edges.push('right');
+    if (rect.top + scrollY < -0.5) edges.push('top');
+    if (rect.bottom + scrollY > documentHeight + 0.5) edges.push('bottom');
+    if (edges.length) outOfBounds.push({ label: label(element), edge: edges.join(',') });
+  }
+
+  const overlaps = [];
+  for (let firstIndex = 0; firstIndex < critical.length; firstIndex += 1) {
+    for (let secondIndex = firstIndex + 1; secondIndex < critical.length; secondIndex += 1) {
+      const first = critical[firstIndex];
+      const second = critical[secondIndex];
+      if (first.contains(second) || second.contains(first)) continue;
+      const a = box(first);
+      const b = box(second);
+      const width = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+      const height = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+      if (width > 0.5 && height > 0.5) {
+        overlaps.push({ a: label(first), b: label(second) });
+      }
+    }
+  }
+
+  const headings = [...document.querySelectorAll('h1,h2,h3,h4,h5,h6')]
+    .filter(isVisible)
+    .map((element) => ({
+      level: Number(element.tagName.slice(1)),
+      text: label(element),
+    }));
+  const mainElements = [...document.querySelectorAll('main,[role="main"]')]
+    .filter(isVisible);
+  const navigationElements = [
+    ...document.querySelectorAll('nav,[role="navigation"]'),
+  ].filter(isVisible);
+  const mainElement = mainElements[0];
+  const mainBox = mainElement ? box(mainElement) : null;
+
+  const textSamples = [];
+  const sampleKeys = new Set();
+  for (const element of [...body.querySelectorAll('*')]) {
+    if (textSamples.length >= 300) break;
+    if (!isVisible(element)) continue;
+    const ownText = [...element.childNodes]
+      .filter((node) => node.nodeType === Node.TEXT_NODE)
+      .map((node) => node.textContent)
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const text = ownText || (element.matches(interactiveSelector) ? label(element) : '');
+    if (!text) continue;
+    const style = getComputedStyle(element);
+    const sample = {
+      text: text.slice(0, 160),
+      foreground: style.color,
+      background: style.backgroundColor,
+      backdrop: resolvedBackdrop(element),
+      fontSize: Number.parseFloat(style.fontSize),
+      fontWeight: style.fontWeight === 'bold'
+        ? 700
+        : Number.parseFloat(style.fontWeight),
+    };
+    const key = Object.values(sample).join('|');
+    if (sampleKeys.has(key)) continue;
+    sampleKeys.add(key);
+    textSamples.push(sample);
+  }
+
+  const nativeControls = [
+    ...document.querySelectorAll('button,input,select,textarea'),
+  ]
+    .filter((element) => isVisible(element) && isEnabled(element))
+    .map((element) => ({
+      label: label(element),
+      styled: hasAuthorStyling(element),
+      signal: element.hasAttribute('data-ui-native-styled')
+        ? 'data-ui-native-styled'
+        : hasAuthorStyling(element) ? 'computed-style' : 'native-default',
+    }));
+  const emojiIcons = interactiveElements
+    .map((element) => ({ label: label(element), text: label(element) }))
+    .filter((entry) => isStandaloneEmoji(entry.text));
+
+  const stateElements = [
+    ...document.querySelectorAll('[data-ui-state],[data-state]'),
+  ];
+  const stateEvidence = requiredStates.map((name) => ({
+    name,
+    reachable: stateElements.some(
+      (element) => (
+        element.getAttribute('data-ui-state') === name
+        || element.getAttribute('data-state') === name
+      ) && isVisible(element),
+    ),
+  }));
+
+  return {
+    page: pageSpec.name,
+    route: pageSpec.route,
+    viewport: viewportName,
+    document: {
+      scrollWidth: documentWidth,
+      clientWidth: root.clientWidth,
+      scrollHeight: documentHeight,
+      clientHeight: root.clientHeight,
+    },
+    outOfBounds,
+    overlaps,
+    interactive,
+    textSamples,
+    landmarks: {
+      main: mainElements.length,
+      navigation: navigationElements.length,
+    },
+    headings,
+    requiredStates,
+    stateEvidence,
+    mainRegion: {
+      width: mainBox?.width ?? 0,
+      height: mainBox?.height ?? 0,
+      visibleText: mainElement?.innerText ?? '',
+    },
+    visibleText: body?.innerText ?? '',
+    nativeControls,
+    emojiIcons,
+  };
+}
+
 async function resolveTarget(page, step) {
   if (step.action === 'fill') {
     const byPlaceholder = page.getByPlaceholder(step.target);
@@ -287,6 +639,17 @@ async function resolveTarget(page, step) {
   const byRole = page.getByRole('button', { name: step.target });
   if (await byRole.count()) return byRole.first();
   return page.getByText(step.target, { exact: false }).first();
+}
+
+function qualitySlug(name) {
+  const normalized = String(name ?? '')
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[^\p{Letter}\p{Number}]+/gu, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48)
+    .replace(/-+$/g, '');
+  return normalized || 'page';
 }
 
 function slug(name) {

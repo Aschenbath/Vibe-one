@@ -1,5 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import http from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
+import { collectUiQuality } from '../src/runner/commands.js';
 import {
   UI_VIEWPORTS,
   auditPageSnapshot,
@@ -226,6 +231,89 @@ test('summary reports missing viewport evidence per page', () => {
   assert.equal(summary.failures[0].page, 'Workspace');
   assert.equal(summary.failures[0].route, '/');
   assert.equal(summary.failures[0].viewport, 'mobile');
+});
+
+test('collector captures ordered desktop-mobile evidence and closes browser resources', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-ui-quality-collector-'));
+  const server = http.createServer((request, response) => {
+    const small = request.url?.startsWith('/small');
+    const buttonSize = small ? 32 : 44;
+    const html = [
+      '<!doctype html><html><head><meta charset="utf-8"><style>',
+      '*{box-sizing:border-box}body{margin:0;color:#17202a;background:#fff;font:16px Arial,sans-serif}',
+      'nav{height:48px;padding:14px 20px;border-bottom:1px solid #d8dde5}',
+      'main{padding:24px;min-height:500px}h1{margin:0 0 20px}',
+      'button{width:', String(buttonSize), 'px;height:', String(buttonSize),
+      'px;border:1px solid #173f9e;border-radius:6px;background:#2457d6;color:#fff}',
+      '</style></head><body>',
+      '<nav aria-label="主导航">质量工作台</nav>',
+      '<main><h1>', small ? '风险队列' : '健康概览', '</h1>',
+      '<button data-ui-native-styled aria-label="筛选">筛选</button>',
+      '<p>真实运营数据已同步 😊</p>',
+      '<section data-ui-state="loading">加载状态证据</section>',
+      '</main></body></html>',
+    ].join('');
+    response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    response.end(html);
+  });
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const address = server.address();
+  const baseUrl = 'http://127.0.0.1:' + address.port + '/';
+  const pages = [
+    { name: '风险队列', route: '/small' },
+    { name: '健康概览', route: '/green' },
+  ];
+
+  try {
+    const evidence = await collectUiQuality(
+      { runDir: root, logEvent: async () => {} },
+      baseUrl,
+      pages,
+      [{ name: 'loading' }],
+    );
+
+    assert.deepEqual(evidence.results.map((result) => result.viewport), [
+      'desktop',
+      'mobile',
+      'desktop',
+      'mobile',
+    ]);
+    assert.deepEqual(evidence.results.map((result) => result.page), [
+      '风险队列',
+      '风险队列',
+      '健康概览',
+      '健康概览',
+    ]);
+    for (const result of evidence.results.slice(0, 2)) {
+      assert.ok(result.failures.some((failure) => failure.code === 'HIT_TARGET_TOO_SMALL'));
+    }
+    assert.ok(evidence.results.slice(2).every((result) => result.pass));
+    assert.equal(evidence.summary.pass, false);
+    assert.equal(
+      evidence.summary.failures.filter(
+        (failure) => failure.code === 'HIT_TARGET_TOO_SMALL',
+      ).length,
+      2,
+    );
+
+    const names = new Set();
+    for (const result of evidence.results) {
+      assert.equal(path.basename(result.screenshot), result.screenshot);
+      assert.match(result.screenshot, /^quality-\d+-.+-(desktop|mobile)\.png$/u);
+      assert.equal(names.has(result.screenshot), false);
+      names.add(result.screenshot);
+      const file = path.join(root, 'quality', result.screenshot);
+      const stat = await fs.stat(file);
+      assert.ok(stat.size > 0);
+      assert.ok(result.metrics.screenshotBytes > 0);
+    }
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await fs.rm(root, { recursive: true, force: true });
+  }
 });
 
 function greenSnapshot(overrides = {}) {
