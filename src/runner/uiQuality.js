@@ -7,14 +7,24 @@ const PLACEHOLDER_CONTENT = /lorem ipsum|Card\s+\d+|Item\s+[A-Z]\b|\bTODO\b|plac
 const ERROR_STACK = /(?:^|\n)\s*(?:Error|TypeError|ReferenceError|SyntaxError|RangeError):[^\n]*(?:\n\s+at\s+)/m;
 
 export function contrastRatio(foreground, background) {
-  const foregroundRgb = parseColor(foreground);
-  const backgroundRgb = parseColor(background);
-  if (!foregroundRgb || !backgroundRgb) return null;
+  const foregroundColor = parseColor(foreground);
+  const backgroundColor = parseColor(background);
+  if (!foregroundColor || !backgroundColor) return null;
+  const backgroundRgb = composite(
+    backgroundColor.channels,
+    backgroundColor.alpha,
+    [255, 255, 255],
+  );
+  const foregroundRgb = composite(
+    foregroundColor.channels,
+    foregroundColor.alpha,
+    backgroundRgb,
+  );
   const foregroundLuminance = luminance(foregroundRgb);
   const backgroundLuminance = luminance(backgroundRgb);
   const light = Math.max(foregroundLuminance, backgroundLuminance);
   const dark = Math.min(foregroundLuminance, backgroundLuminance);
-  return Math.round(((light + 0.05) / (dark + 0.05)) * 100) / 100;
+  return (light + 0.05) / (dark + 0.05);
 }
 
 function parseColor(value) {
@@ -25,9 +35,12 @@ function parseColor(value) {
     const expanded = hex[1].length === 3
       ? hex[1].split('').map((part) => part + part).join('')
       : hex[1];
-    return [0, 2, 4].map(
-      (index) => Number.parseInt(expanded.slice(index, index + 2), 16),
-    );
+    return {
+      channels: [0, 2, 4].map(
+        (index) => Number.parseInt(expanded.slice(index, index + 2), 16),
+      ),
+      alpha: 1,
+    };
   }
 
   const functional = color.match(
@@ -37,10 +50,17 @@ function parseColor(value) {
   const rgba = color.startsWith('rgba(');
   const alpha = functional[4];
   if (rgba !== (alpha != null)) return null;
-  if (rgba && Number(alpha) !== 1) return null;
   const channels = functional.slice(1, 4).map(Number);
   if (channels.some((channel) => channel < 0 || channel > 255)) return null;
-  return channels;
+  const opacity = rgba ? Number(alpha) : 1;
+  if (!Number.isFinite(opacity) || opacity < 0 || opacity > 1) return null;
+  return { channels, alpha: opacity };
+}
+
+function composite(foreground, alpha, background) {
+  return foreground.map(
+    (channel, index) => channel * alpha + background[index] * (1 - alpha),
+  );
 }
 
 function luminance(rgb) {
@@ -99,7 +119,7 @@ export function auditPageSnapshot(snapshot = {}) {
     const ratio = contrastRatio(sample?.foreground, sample?.background);
     const fontSize = numberOrZero(sample?.fontSize);
     const fontWeight = numberOrZero(sample?.fontWeight);
-    const largeText = fontSize >= 24 || (fontSize >= 18 && fontWeight >= 700);
+    const largeText = fontSize >= 24 || (fontSize >= 18.66 && fontWeight >= 700);
     const threshold = largeText ? 3 : 4.5;
     if (ratio == null) {
       add(

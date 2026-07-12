@@ -15,7 +15,13 @@ test('UI viewport and WCAG contrast contracts are deterministic', () => {
   assert.equal(contrastRatio('#000', '#fff'), 21);
   assert.equal(contrastRatio('#000000', 'rgb(255, 255, 255)'), 21);
   assert.equal(contrastRatio('rgba(0, 0, 0, 1)', '#ffffff'), 21);
-  assert.ok(contrastRatio('#767676', '#fff') >= 4.5);
+  const translucentForeground = contrastRatio('rgba(0, 0, 0, 0.5)', '#ffffff');
+  const translucentBackground = contrastRatio('#000', 'rgba(0, 0, 0, 0.5)');
+  const unrounded = contrastRatio('#767676', '#fff');
+  assert.ok(translucentForeground > 3.9 && translucentForeground < 4.1);
+  assert.ok(translucentBackground > 5.2 && translucentBackground < 5.4);
+  assert.ok(unrounded > 4.54 && unrounded < 4.55);
+  assert.notEqual(unrounded, 4.54);
   assert.equal(contrastRatio('invalid', '#fff'), null);
 });
 
@@ -96,12 +102,30 @@ test('contrast audit uses WCAG AA thresholds and reports invalid colors', () => 
       fontWeight: 400,
     }],
   }));
-  const boldLarge = auditPageSnapshot(greenSnapshot({
+  const boldBelowBoundary = auditPageSnapshot(greenSnapshot({
     textSamples: [{
-      text: '粗体标题',
+      text: '18px 粗体标题',
       foreground: '#777',
       background: '#fff',
       fontSize: 18,
+      fontWeight: 700,
+    }],
+  }));
+  const boldBoundary = auditPageSnapshot(greenSnapshot({
+    textSamples: [{
+      text: '18.66px 粗体标题',
+      foreground: '#777',
+      background: '#fff',
+      fontSize: 18.66,
+      fontWeight: 700,
+    }],
+  }));
+  const boldLarge = auditPageSnapshot(greenSnapshot({
+    textSamples: [{
+      text: '19px 粗体标题',
+      foreground: '#777',
+      background: '#fff',
+      fontSize: 19,
       fontWeight: 700,
     }],
   }));
@@ -117,6 +141,11 @@ test('contrast audit uses WCAG AA thresholds and reports invalid colors', () => 
 
   assert.deepEqual(normal.failures.map((failure) => failure.code), ['LOW_CONTRAST']);
   assert.equal(large.pass, true);
+  assert.deepEqual(
+    boldBelowBoundary.failures.map((failure) => failure.code),
+    ['LOW_CONTRAST'],
+  );
+  assert.equal(boldBoundary.pass, true);
   assert.equal(boldLarge.pass, true);
   assert.deepEqual(invalid.failures.map((failure) => failure.code), ['LOW_CONTRAST']);
   assert.match(invalid.failures[0].detail, /invalid color/i);
