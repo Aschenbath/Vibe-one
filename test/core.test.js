@@ -34,6 +34,12 @@ const ONE_PIXEL_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
   'base64',
 );
+
+async function loadPolisherModule() {
+  const module = await import('../src/core/polisher.js').catch(() => null);
+  assert.ok(module, 'polisher module must exist');
+  return module;
+}
 const PRODUCT_DESIGN = {
   productType: '数据密集型 B2B SaaS',
   targetUsers: ['客服运营主管', '质检专员'],
@@ -1105,6 +1111,195 @@ test('delivery report records input references and visual score history', async 
   assert.doesNotMatch(report, /private\.invalid|vibe-secret/);
   assert.doesNotMatch(events, /vibe-visual-report-|vibe-secret|private\.invalid/);
   await fs.rm(root, { recursive: true, force: true });
+});
+
+test('polish limits and file validation enforce exact bounded safe output', async () => {
+  const {
+    POLISH_LIMITS,
+    validatePolishFiles,
+  } = await loadPolisherModule();
+  assert.equal(Object.isFrozen(POLISH_LIMITS), true);
+  assert.deepEqual(POLISH_LIMITS, {
+    maxFiles: 4,
+    maxCharacters: 18_000,
+    maxRounds: 1,
+  });
+  const exact = [
+    { path: 'src/a.js', content: 'a'.repeat(4_500) },
+    { path: 'src/b.js', content: 'b'.repeat(4_500) },
+    { path: 'src/c.js', content: 'c'.repeat(4_500) },
+    { path: 'src/d.js', content: 'd'.repeat(4_500) },
+  ];
+  assert.equal(validatePolishFiles(exact, APP), exact);
+
+  for (const files of [
+    Array.from({ length: 5 }, (_, index) => ({
+      path: `src/${index}.js`,
+      content: 'x',
+    })),
+    [{ path: 'src/large.js', content: 'x'.repeat(18_001) }],
+    null,
+    [],
+    [{ path: '', content: 'x' }],
+    [{ path: 'src/a.js', content: null }],
+  ]) {
+    assert.throws(
+      () => validatePolishFiles(files, APP),
+      (error) => error.code === 'POLISH_OUTPUT_LIMIT',
+    );
+  }
+});
+
+test('polish file validation reuses the builder path jail', async () => {
+  const { validatePolishFiles } = await loadPolisherModule();
+  for (const unsafePath of [
+    'package.json',
+    'package-lock.json',
+    'vite.config.js',
+    '.env',
+    'node_modules/pkg/index.js',
+    '../outside.js',
+    '/etc/passwd',
+    'C:\\Windows\\evil.js',
+  ]) {
+    assert.throws(
+      () => validatePolishFiles([{ path: unsafePath, content: 'x' }], APP),
+      (error) => error.code === 'POLISH_OUTPUT_LIMIT',
+      unsafePath,
+    );
+  }
+});
+
+test('polish candidate copies trusted source without disposable build caches', async () => {
+  const { createPolishCandidate } = await loadPolisherModule();
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-polish-copy-'));
+  const ctx = await createRunContext(path.join(root, 'target'), {
+    runsRoot: path.join(root, 'runs'),
+  });
+  try {
+    await fs.mkdir(path.join(ctx.appDir, 'src'), { recursive: true });
+    await fs.mkdir(path.join(ctx.appDir, 'node_modules', 'pkg'), { recursive: true });
+    await fs.mkdir(path.join(ctx.appDir, 'dist'), { recursive: true });
+    await fs.mkdir(path.join(ctx.appDir, '.vite'), { recursive: true });
+    await fs.writeFile(path.join(ctx.appDir, 'src', 'App.jsx'), 'draft');
+    await fs.writeFile(path.join(ctx.appDir, 'package.json'), '{"name":"app"}');
+    await fs.writeFile(path.join(ctx.appDir, 'vite.config.js'), 'export default {}');
+    await fs.writeFile(path.join(ctx.appDir, 'node_modules', 'pkg', 'index.js'), 'cache');
+    await fs.writeFile(path.join(ctx.appDir, 'dist', 'index.js'), 'build');
+    await fs.writeFile(path.join(ctx.appDir, '.vite', 'meta.json'), 'cache');
+
+    await createPolishCandidate(ctx);
+    await fs.writeFile(path.join(ctx.polishCandidateDir, 'src', 'App.jsx'), 'candidate');
+
+    assert.equal(await fs.readFile(path.join(ctx.appDir, 'src', 'App.jsx'), 'utf8'), 'draft');
+    assert.equal(await fs.readFile(path.join(ctx.polishCandidateDir, 'src', 'App.jsx'), 'utf8'), 'candidate');
+    assert.equal(await fs.readFile(path.join(ctx.polishCandidateDir, 'package.json'), 'utf8'), '{"name":"app"}');
+    assert.equal(await fs.readFile(path.join(ctx.polishCandidateDir, 'vite.config.js'), 'utf8'), 'export default {}');
+    for (const disposable of ['node_modules', 'dist', '.vite']) {
+      await assert.rejects(fs.stat(path.join(ctx.polishCandidateDir, disposable)), { code: 'ENOENT' });
+    }
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('polish promotion retains the prior app as the owned draft', async () => {
+  const {
+    createPolishCandidate,
+    promotePolishCandidate,
+  } = await loadPolisherModule();
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-polish-promote-'));
+  const ctx = await createRunContext(path.join(root, 'target'), {
+    runsRoot: path.join(root, 'runs'),
+  });
+  try {
+    await fs.mkdir(path.join(ctx.appDir, 'src'), { recursive: true });
+    await fs.writeFile(path.join(ctx.appDir, 'src', 'App.jsx'), 'draft');
+    await createPolishCandidate(ctx);
+    await fs.writeFile(path.join(ctx.polishCandidateDir, 'src', 'App.jsx'), 'candidate');
+    await fs.mkdir(ctx.draftAppDir, { recursive: true });
+    await fs.writeFile(path.join(ctx.draftAppDir, 'stale.txt'), 'stale');
+
+    await promotePolishCandidate(ctx);
+
+    assert.equal(await fs.readFile(path.join(ctx.appDir, 'src', 'App.jsx'), 'utf8'), 'candidate');
+    assert.equal(await fs.readFile(path.join(ctx.draftAppDir, 'src', 'App.jsx'), 'utf8'), 'draft');
+    await assert.rejects(fs.stat(path.join(ctx.draftAppDir, 'stale.txt')), { code: 'ENOENT' });
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('polish promotion with a missing candidate leaves the app untouched', async () => {
+  const { promotePolishCandidate } = await loadPolisherModule();
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-polish-missing-'));
+  const ctx = await createRunContext(path.join(root, 'target'), {
+    runsRoot: path.join(root, 'runs'),
+  });
+  try {
+    await fs.mkdir(path.join(ctx.appDir, 'src'), { recursive: true });
+    await fs.writeFile(path.join(ctx.appDir, 'src', 'App.jsx'), 'draft');
+    await fs.rm(ctx.polishCandidateDir, { recursive: true, force: true });
+
+    await assert.rejects(
+      promotePolishCandidate(ctx),
+      (error) => error.code === 'POLISH_CANDIDATE_MISSING',
+    );
+    assert.equal(await fs.readFile(path.join(ctx.appDir, 'src', 'App.jsx'), 'utf8'), 'draft');
+    await assert.rejects(fs.stat(ctx.draftAppDir), { code: 'ENOENT' });
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('run context exposes owned quality and polish paths without precreating the draft', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-polish-context-'));
+  const ctx = await createRunContext(path.join(root, 'target'), {
+    runsRoot: path.join(root, 'runs'),
+  });
+  try {
+    assert.equal((await fs.stat(ctx.qualityDir)).isDirectory(), true);
+    assert.equal((await fs.stat(ctx.polishDir)).isDirectory(), true);
+    assert.equal((await fs.stat(ctx.polishCandidateDir)).isDirectory(), true);
+    await assert.rejects(fs.stat(ctx.draftAppDir), { code: 'ENOENT' });
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('config fixes polish rounds to one and rejects external expansion', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-polish-config-'));
+  const inputDir = path.join(root, 'input');
+  await fs.mkdir(inputDir, { recursive: true });
+  await fs.writeFile(path.join(inputDir, 'brief.md'), '# Demo');
+  try {
+    const defaults = await loadConfig(root, { apiKey: 'session-secret' });
+    assert.equal(defaults.maxPolishRounds, 1);
+    await fs.writeFile(
+      path.join(inputDir, 'constraints.json'),
+      JSON.stringify({ maxPolishRounds: 1 }),
+    );
+    assert.equal(
+      (await loadConfig(root, { apiKey: 'session-secret' })).maxPolishRounds,
+      1,
+    );
+    for (const invalid of [0, 2, -1, '1']) {
+      await fs.writeFile(
+        path.join(inputDir, 'constraints.json'),
+        JSON.stringify({ maxPolishRounds: invalid }),
+      );
+      await assert.rejects(
+        loadConfig(root, { apiKey: 'session-secret' }),
+        (error) => error.code === 'CONFIG_INVALID',
+      );
+    }
+    assert.doesNotMatch(
+      await fs.readFile(path.join(inputDir, 'constraints.json'), 'utf8'),
+      /session-secret/,
+    );
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
 });
 
 test('run context mirrors persisted events to an optional listener', async () => {

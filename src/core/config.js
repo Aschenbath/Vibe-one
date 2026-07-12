@@ -8,6 +8,7 @@ const DEFAULTS = {
   stack: 'react-vite',
   viewport: { width: 390, height: 844 },
   maxRepairRounds: 2,
+  maxPolishRounds: 1,
   model: process.env.VIBE_ONE_MODEL || 'gpt-4o-mini',
   baseUrl: process.env.VIBE_ONE_BASE_URL || 'https://api.openai.com/v1',
   temperature: 0.2,
@@ -40,6 +41,15 @@ export async function loadConfig(targetDir, overrides = {}) {
     // constraints.json is optional
   }
 
+  if (
+    constraints.maxPolishRounds !== undefined
+    && constraints.maxPolishRounds !== 1
+  ) {
+    const error = new Error('CONFIG_INVALID: maxPolishRounds must be 1');
+    error.code = 'CONFIG_INVALID';
+    throw error;
+  }
+
   const apiKey = overrides.apiKey || process.env.VIBE_ONE_API_KEY;
   if (!apiKey) {
     throw new Error('VIBE_ONE_API_KEY is not set (see .env.example)');
@@ -48,6 +58,7 @@ export async function loadConfig(targetDir, overrides = {}) {
   return {
     ...DEFAULTS,
     ...constraints,
+    maxPolishRounds: 1,
     apiKey,
     brief,
     references,
