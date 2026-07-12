@@ -7,13 +7,14 @@ import { createProvider } from '../providers/openaiCompatible.js';
 import { plan } from './planner.js';
 import { build } from './builder.js';
 import { review } from './reviewer.js';
-import { fix, describeFailure } from './fixer.js';
+import { fix, describeFailure, sanitizeUiFailure } from './fixer.js';
 import {
   npmInstall,
   npmBuild,
   startPreview,
   screenshotPages,
   runScenarios,
+  collectUiQuality,
   compareReferencePages,
 } from '../runner/commands.js';
 import { writeReport } from '../reporter/deliveryReport.js';
@@ -29,8 +30,13 @@ export async function runPipeline({ targetDir, config, planOnly = false, provide
   let shots = [];
   let scenarioResults = [];
   let visualResults = [];
+  let uiQuality = null;
   const visualHistory = [];
+  const qualityHistory = [];
   let fatal = null;
+  let errorCode;
+  const qualityDir = ctx.qualityDir ?? path.join(ctx.runDir, 'quality');
+  await fs.mkdir(qualityDir, { recursive: true });
 
   try {
     spec = await plan(ctx, provider, config);
@@ -48,6 +54,20 @@ export async function runPipeline({ targetDir, config, planOnly = false, provide
       shots = verdict.shots;
       scenarioResults = verdict.scenarioResults ?? [];
       visualResults = verdict.visualResults ?? [];
+      uiQuality = verdict.uiQuality ?? uiQuality;
+      if (verdict.uiQuality) {
+        qualityHistory.push({ round: rounds, ...verdict.uiQuality });
+        await fs.writeFile(
+          path.join(qualityDir, `round-${rounds}.json`),
+          JSON.stringify(verdict.uiQuality, null, 2),
+          'utf8',
+        );
+        await fs.writeFile(
+          path.join(qualityDir, 'history.json'),
+          JSON.stringify(qualityHistory, null, 2),
+          'utf8',
+        );
+      }
       visualHistory.push({ round: rounds, results: visualResults });
       await fs.writeFile(
         path.join(ctx.visualDir, `round-${rounds}.json`),
@@ -84,10 +104,15 @@ export async function runPipeline({ targetDir, config, planOnly = false, provide
           };
         })
         .filter(Boolean);
+      const uiFailures = await buildUiFailures(
+        qualityDir,
+        verdict.uiQuality?.summary?.failures ?? [],
+      );
       await fix(ctx, provider, {
         failure,
         round: rounds + 1,
         visualFailures,
+        uiFailures,
       });
     }
   } catch (err) {
@@ -101,6 +126,15 @@ export async function runPipeline({ targetDir, config, planOnly = false, provide
   return finish();
 
   async function finish() {
+    const uiFailed = finalReview?.uiQuality?.pass === false;
+    errorCode = fatal?.code
+      ? String(fatal.code)
+      : uiFailed ? 'UI_QUALITY_FAILED' : undefined;
+    await fs.writeFile(
+      path.join(qualityDir, 'history.json'),
+      JSON.stringify(qualityHistory, null, 2),
+      'utf8',
+    );
     await fs.writeFile(
       path.join(ctx.visualDir, 'comparisons.json'),
       JSON.stringify(visualHistory, null, 2),
@@ -115,9 +149,19 @@ export async function runPipeline({ targetDir, config, planOnly = false, provide
       shots,
       scenarioResults,
       visualHistory,
+      uiQuality,
+      qualityHistory,
+      errorCode,
       error: fatal,
     });
-    return { runId: ctx.runId, runDir: ctx.runDir, status };
+    return {
+      runId: ctx.runId,
+      runDir: ctx.runDir,
+      status,
+      uiQuality,
+      qualityHistory,
+      ...(errorCode ? { errorCode } : {}),
+    };
   }
 }
 
@@ -142,9 +186,41 @@ async function verifyOnce(ctx, config, spec, round) {
   let shots = [];
   let scenarioResults = [];
   let visualResults = [];
+  let uiQuality = null;
+  try {
   try {
     shots = await screenshotPages(ctx, preview.url, spec.pages ?? [], config.viewport);
     scenarioResults = await runScenarios(ctx, preview.url, spec.scenarios ?? [], config.viewport);
+  } catch {
+    return {
+      install,
+      build: buildResult,
+      shots,
+      scenarioResults,
+      visualResults,
+      uiQuality,
+      reviewResult: failEarly('screenshot/scenario failed'),
+    };
+  }
+
+  try {
+    uiQuality = safeUiQualityEvidence(await collectUiQuality(
+      ctx,
+      preview.url,
+      spec.pages ?? [],
+      spec.productDesign?.requiredStates ?? [],
+    ));
+  } catch {
+    uiQuality = failedUiQualityEvidence();
+  }
+  await ctx.logEvent('quality:audit', {
+    summary: uiQuality.summary.pass
+      ? 'UI quality checks pass'
+      : `${uiQuality.summary.failures.length} checks failing`,
+    ...(!uiQuality.summary.pass ? { code: 'UI_QUALITY_FAILED' } : {}),
+  });
+
+  try {
     visualResults = await compareReferencePages(
       ctx,
       preview.url,
@@ -153,17 +229,16 @@ async function verifyOnce(ctx, config, spec, round) {
       config.visualThreshold,
       round,
     );
-  } catch (err) {
+  } catch {
     return {
       install,
       build: buildResult,
       shots,
       scenarioResults,
       visualResults,
-      reviewResult: failEarly(`screenshot/scenario/visual failed: ${err.message}`),
+      uiQuality,
+      reviewResult: failEarly('visual comparison failed'),
     };
-  } finally {
-    preview.stop();
   }
 
   const reviewResult = review({
@@ -173,14 +248,99 @@ async function verifyOnce(ctx, config, spec, round) {
     spec,
     scenarioResults,
     visualResults,
+    uiQuality: uiQuality.summary,
   });
   await ctx.logEvent('review', {
     summary: reviewResult.pass ? 'all checks pass' : `${reviewResult.failed.length} checks failing`,
   });
-  return { install, build: buildResult, shots, scenarioResults, visualResults, reviewResult };
+  return {
+    install,
+    build: buildResult,
+    shots,
+    scenarioResults,
+    visualResults,
+    uiQuality,
+    reviewResult,
+  };
+  } finally {
+    preview.stop();
+  }
 }
 
 function failEarly(reason) {
   const check = { name: reason, pass: false, detail: 'pipeline stage failed before review' };
   return { pass: false, checks: [check], failed: [check] };
+}
+
+function safeUiQualityEvidence(value = {}) {
+  const results = (value.results ?? []).map((result) => {
+    const identity = sanitizeUiFailure(result);
+    const failures = (result.failures ?? []).map(sanitizeUiFailure);
+    return {
+      page: identity.page,
+      route: identity.route,
+      viewport: identity.viewport,
+      pass: result.pass === true && failures.length === 0,
+      failures,
+      metrics: {
+        scrollWidth: finiteNumber(result.metrics?.scrollWidth),
+        clientWidth: finiteNumber(result.metrics?.clientWidth),
+        interactiveCount: finiteNumber(result.metrics?.interactiveCount),
+        textSampleCount: finiteNumber(result.metrics?.textSampleCount),
+        screenshotBytes: finiteNumber(result.metrics?.screenshotBytes),
+      },
+      screenshot: identity.screenshot,
+    };
+  });
+  const failures = (value.summary?.failures ?? []).map((failure) => {
+    const matchingResult = (value.results ?? []).find(
+      (result) => (
+        result.page === failure.page
+        && result.viewport === failure.viewport
+      ),
+    );
+    return sanitizeUiFailure({
+      ...failure,
+      screenshot: failure.screenshot ?? matchingResult?.screenshot,
+    });
+  });
+  return {
+    results,
+    summary: {
+      pass: value.summary?.pass === true && failures.length === 0,
+      failures,
+    },
+  };
+}
+
+function failedUiQualityEvidence() {
+  const failure = sanitizeUiFailure({
+    code: 'UI_QUALITY_FAILED',
+    detail: 'UI quality collection failed',
+  });
+  return {
+    results: [],
+    summary: { pass: false, failures: [failure] },
+  };
+}
+
+async function buildUiFailures(qualityDir, failures) {
+  const items = [];
+  for (const failure of failures) {
+    const safe = sanitizeUiFailure(failure);
+    if (!safe.screenshot) continue;
+    const actualFile = path.join(qualityDir, safe.screenshot);
+    try {
+      const stat = await fs.stat(actualFile);
+      if (stat.isFile() && stat.size > 0) items.push({ ...safe, actualFile });
+    } catch {
+      // Missing screenshots remain structured text evidence only.
+    }
+  }
+  return items;
+}
+
+function finiteNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
 }

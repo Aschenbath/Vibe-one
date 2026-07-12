@@ -753,6 +753,41 @@ test('review passes only when everything is green', () => {
   assert.equal(missingPage.pass, false);
 });
 
+test('review gates otherwise-green delivery on the UI quality summary', () => {
+  const base = {
+    install: { exitCode: 0 },
+    build: { exitCode: 0 },
+    shots: [okShot],
+    spec: { pages: [{ name: 'Home', route: '/' }] },
+    scenarioResults: [],
+    visualResults: [],
+  };
+  const failure = {
+    code: 'HIT_TARGET_TOO_SMALL',
+    page: '总览',
+    route: '/',
+    viewport: 'mobile',
+    detail: '筛选 32x32',
+    screenshot: 'quality-overview-mobile.png',
+  };
+  const failed = review({
+    ...base,
+    uiQuality: { pass: false, failures: [failure] },
+  });
+  const passed = review({
+    ...base,
+    uiQuality: { pass: true, failures: [] },
+  });
+
+  assert.equal(failed.pass, false);
+  assert.deepEqual(
+    failed.failed.map((check) => check.name),
+    ['UI quality audit passes'],
+  );
+  assert.deepEqual(failed.uiQuality.failures, [failure]);
+  assert.equal(passed.pass, true);
+});
+
 test('review requires mapped visual comparisons to meet threshold', () => {
   const spec = {
     pages: [{ name: 'Home', route: '/', referenceImage: 'home.png' }],
@@ -834,6 +869,42 @@ test('describeFailure includes build stderr and failed checks', () => {
   assert.match(text, /REVIEW CHECKS FAILED/);
 });
 
+test('describeFailure includes safe structured UI audit evidence only', () => {
+  const privateEndpoint = 'https://private.invalid/v1';
+  const windowsPath = 'D:\\private\\vibe-secret\\quality-overview-mobile.png';
+  const posixPath = '/private/vibe-secret/artifact.txt';
+  const failure = {
+    code: 'HIT_TARGET_TOO_SMALL',
+    page: '总览',
+    route: '/',
+    viewport: 'mobile',
+    detail: [
+      '筛选 32x32',
+      windowsPath,
+      posixPath,
+      privateEndpoint,
+      'Error: private failure\n    at secret.js:1:1',
+      'data:image/png;base64,AAAA',
+    ].join(' '),
+    screenshot: windowsPath,
+  };
+  const text = describeFailure({
+    reviewResult: {
+      failed: [{ name: 'UI quality audit passes', detail: '1 checks failing' }],
+      uiQuality: { pass: false, failures: [failure] },
+    },
+    uiQuality: { summary: { pass: false, failures: [failure] } },
+  });
+
+  assert.match(text, /UI QUALITY AUDIT FAILED/);
+  assert.match(text, /HIT_TARGET_TOO_SMALL.*总览.*mobile.*筛选 32x32/s);
+  assert.match(text, /quality-overview-mobile\.png/);
+  assert.doesNotMatch(
+    text,
+    /private\.invalid|vibe-secret|D:\\|\/private\/|data:image|secret\.js|\n\s*at\s/u,
+  );
+});
+
 test('gatherSource collects app source and skips scaffold + node_modules', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-src-'));
   await fs.mkdir(path.join(dir, 'src'), { recursive: true });
@@ -876,6 +947,36 @@ test('visual repair content includes diagnostics, reference, and generated scree
     assert.equal(content.filter((part) => part.type === 'image_url').length, 2);
     assert.match(content[0].text, /visual similarity failed/);
     assert.match(content[1].text, /Home.*0\.4.*0\.62/s);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('UI repair content includes diagnostics and generated screenshots without reference labels', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-ui-fix-'));
+  const actual = path.join(root, 'quality-overview-mobile.png');
+  await fs.writeFile(actual, ONE_PIXEL_PNG);
+
+  try {
+    const content = await createFixerUserContent({
+      round: 1,
+      failure: 'UI quality audit failed',
+      source: '=== FILE: src/App.jsx\nexport default 1\n=== END ===',
+      uiFailures: [{
+        code: 'HIT_TARGET_TOO_SMALL',
+        page: '总览',
+        route: '/',
+        viewport: 'mobile',
+        detail: '筛选 32x32',
+        screenshot: 'quality-overview-mobile.png',
+        actualFile: actual,
+      }],
+    });
+
+    assert.equal(content.filter((part) => part.type === 'image_url').length, 1);
+    assert.match(content[0].text, /UI quality audit failed/);
+    assert.match(content[1].text, /HIT_TARGET_TOO_SMALL.*总览.*mobile.*筛选 32x32/s);
+    assert.doesNotMatch(content[1].text, /Reference image follows|vibe-ui-fix-/);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
