@@ -180,6 +180,10 @@ test('builder exposes the fixed dependency and output limit contracts', async ()
 
   assert.equal(APP_DEPENDENCIES.dependencies['lucide-react'], '^0.468.0');
   assert.deepEqual(BUILD_LIMITS, { maxFiles: 12, maxCharacters: 24_000 });
+  assert.equal(Object.isFrozen(BUILD_LIMITS), true);
+  assert.equal(Object.isFrozen(APP_DEPENDENCIES), true);
+  assert.equal(Object.isFrozen(APP_DEPENDENCIES.dependencies), true);
+  assert.equal(Object.isFrozen(APP_DEPENDENCIES.devDependencies), true);
 });
 
 test('generated file limits accept the exact file and character boundaries', async () => {
@@ -220,6 +224,44 @@ test('generated file limits reject excess and malformed model output with a stab
       () => validateGeneratedFiles(files),
       (error) => error.code === 'BUILD_OUTPUT_LIMIT',
     );
+  }
+});
+
+test('build rejects over-limit output before writing any model-authored file', async () => {
+  const { build } = await import('../src/core/builder.js');
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-builder-limit-order-'));
+  const appDir = path.join(root, 'app');
+  const events = [];
+  const content = Array.from({ length: 13 }, (_, index) => [
+    '=== FILE: src/file-' + index + '.jsx',
+    'export default function File' + index + '() { return null; }',
+    '=== END ===',
+  ].join('\n')).join('\n');
+  const ctx = {
+    appDir,
+    logEvent: async (type, data) => events.push({ type, ...data }),
+    addUsage: () => {},
+  };
+
+  await fs.mkdir(appDir, { recursive: true });
+  try {
+    await assert.rejects(
+      build(
+        ctx,
+        { chat: async () => ({ content, usage: {} }) },
+        { brief: '构建质量运营工作台' },
+        { summary: '质量运营工作台' },
+      ),
+      (error) => error.code === 'BUILD_OUTPUT_LIMIT',
+    );
+    assert.equal((await fs.stat(path.join(appDir, 'package.json'))).isFile(), true);
+    await assert.rejects(
+      fs.access(path.join(appDir, 'src', 'file-0.jsx')),
+      (error) => error.code === 'ENOENT',
+    );
+    assert.equal(events.some((event) => event.type === 'build:done'), false);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
   }
 });
 

@@ -16,10 +16,10 @@ import path from 'node:path';
 const FILE_MARK = '=== FILE:';
 const END_MARK = '=== END ===';
 
-export const BUILD_LIMITS = {
+export const BUILD_LIMITS = Object.freeze({
   maxFiles: 12,
   maxCharacters: 24_000,
-};
+});
 
 export const BUILDER_SYSTEM = `You are the builder of a bounded app-replication pipeline.
 Target stack: React 18 + Vite, plain CSS, mock data in src/data/.
@@ -61,18 +61,18 @@ const FORBIDDEN_FILES = new Set([
   '.env',
 ]);
 
-export const APP_DEPENDENCIES = {
-  dependencies: {
+export const APP_DEPENDENCIES = Object.freeze({
+  dependencies: Object.freeze({
     react: '^18.3.1',
     'react-dom': '^18.3.1',
     'react-router-dom': '^6.28.0',
     'lucide-react': '^0.468.0',
-  },
-  devDependencies: {
+  }),
+  devDependencies: Object.freeze({
     vite: '^5.4.11',
     '@vitejs/plugin-react': '^4.3.4',
-  },
-};
+  }),
+});
 
 const VITE_CONFIG = `import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
