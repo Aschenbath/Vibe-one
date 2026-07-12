@@ -1,12 +1,25 @@
 // Planner: brief -> structured spec + plan artifacts.
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { renderProductDesign, validateProductDesign } from './productDesign.js';
 import { referenceContentPart } from './referenceImages.js';
 
 export const PLANNER_SYSTEM = `You are the planner of a bounded app-replication pipeline.
 Given a product brief, output STRICT JSON with keys:
   summary: string
   visualDesign: { layout: string, palette: [string], typography: string, spacing: string, components: [string], responsive: string }
+  productDesign: {
+    productType: string
+    targetUsers: [string]
+    tone: string
+    density: string
+    navigation: string
+    contentStrategy: string
+    tokens: { colors: object, typography: object, spacing: [string], radii: [string] }
+    componentLanguage: [string]
+    requiredStates: [{ name, trigger }]
+    responsiveRules: [string]
+  }
   pages: [{ name, route, purpose, mustContain: [string], referenceImage: string|null }]
       // mustContain: 2-4 short visible text fragments that MUST appear on that page (labels, headings, seeded values)
       // referenceImage: exact uploaded reference file name mapped to this page, or null when no image applies
@@ -19,6 +32,10 @@ Given a product brief, output STRICT JSON with keys:
       // value is required for fill; expectText is a visible string that must appear AFTER the steps run.
       // Encode each testable interaction from the brief as one scenario (e.g. add item -> new row visible, search -> filtered).
 Keep the app small: mock data only, no backend, no auth. Do not invent features beyond the brief.
+Make productDesign values executable and product-specific, not generic phrases such as modern or clean.
+Provide at least 6 color tokens, 4 typography tokens, 5 spacing values, and 3 radii.
+requiredStates must contain at least 2 distinct states named loading, empty, error, or success; each trigger must be concrete and at least 4 characters.
+Core productDesign text must be concrete; density may be compact, otherwise describe it with at least 8 characters.
 Every mustContain fragment and every scenario.expectText must be something a correct implementation of THIS brief will actually render.`;
 
 export function createPlannerUserContent(config) {
@@ -46,11 +63,15 @@ export async function plan(ctx, provider, config) {
   });
   ctx.addUsage(usage);
   validateVisualPlan(spec, config.references ?? []);
+  spec.productDesign = validateProductDesign(spec?.productDesign);
 
   const specMd = renderSpec(spec);
   const planMd = renderPlan(spec, config);
   await fs.writeFile(path.join(ctx.runDir, 'SPEC.generated.md'), specMd, 'utf8');
   await fs.writeFile(path.join(ctx.runDir, 'PLAN.generated.md'), planMd, 'utf8');
+  await ctx.logEvent('design:done', {
+    summary: String(spec.pages?.length ?? 0) + ' pages with executable product design',
+  });
   await ctx.logEvent('plan:done', {
     summary: `${spec.pages?.length ?? 0} pages, ${spec.scenarios?.length ?? 0} scenarios planned`,
   });
@@ -97,32 +118,33 @@ function coded(code, message) {
 
 function renderSpec(spec) {
   const lines = [
-    '# Generated Spec', '',
-    `## Summary`, '', spec.summary ?? '(none)', '',
-    '## Visual Design', '',
+    '# 生成规格 / Generated Spec', '',
+    '## 概要 / Summary', '', spec.summary ?? '(none)', '',
+    '## 视觉设计 / Visual Design', '',
     `- Layout: ${spec.visualDesign?.layout ?? '(not specified)'}`,
     `- Palette: ${(spec.visualDesign?.palette ?? []).join(', ') || '(not specified)'}`,
     `- Typography: ${spec.visualDesign?.typography ?? '(not specified)'}`,
     `- Spacing: ${spec.visualDesign?.spacing ?? '(not specified)'}`,
     `- Components: ${(spec.visualDesign?.components ?? []).join(', ') || '(not specified)'}`,
     `- Responsive: ${spec.visualDesign?.responsive ?? '(not specified)'}`, '',
-    '## Pages', '',
+    renderProductDesign(spec.productDesign), '',
+    '## 页面 / Pages', '',
     ...(spec.pages ?? []).flatMap((p) => [
       `- **${p.name}** \`${p.route}\` - ${p.purpose}`,
       `  - reference image: ${p.referenceImage ? `\`${p.referenceImage}\`` : '(none)'}`,
       ...(p.mustContain ?? []).map((t) => `  - must contain: \`${t}\``),
     ]), '',
-    '## Components', '',
+    '## 组件 / Components', '',
     ...(spec.components ?? []).map((c) => `- **${c.name}** (used by: ${c.usedBy})`), '',
-    '## Data Model', '',
+    '## 数据模型 / Data Model', '',
     ...(spec.dataModel ?? []).map((d) => `- **${d.entity}**: ${(d.fields ?? []).join(', ')}`), '',
-    '## Interactions', '',
+    '## 交互 / Interactions', '',
     ...(spec.interactions ?? []).map((i) => `- ${i}`), '',
-    '## Interaction Scenarios (verified)', '',
+    '## 交互场景（已验证） / Interaction Scenarios (verified)', '',
     ...(spec.scenarios ?? []).map(
       (s) => `- **${s.name}** (\`${s.route}\`): ${(s.steps ?? []).map((st) => `${st.action} "${st.target}"${st.value ? `="${st.value}"` : ''}`).join(' -> ')} => expect \`${s.expectText}\``,
     ), '',
-    '## Acceptance Criteria', '',
+    '## 验收标准 / Acceptance Criteria', '',
     ...(spec.acceptance ?? []).map((a) => `- [ ] ${a}`), '',
   ];
   return lines.join('\n');
@@ -130,19 +152,26 @@ function renderSpec(spec) {
 
 function renderPlan(spec, config) {
   return [
-    '# Generated Plan', '',
+    '# 生成计划 / Generated Plan', '',
+    '- 产品概要 / Product Summary: ' + (spec.summary ?? '(none)'),
     `- Stack: ${config.stack}`,
     `- Viewport: ${config.viewport.width}x${config.viewport.height}`,
     `- Max repair rounds: ${config.maxRepairRounds}`,
     `- Pages to build: ${(spec.pages ?? []).map((p) => p.name).join(', ')}`,
     `- Reference images: ${(config.references ?? []).map((reference) => reference.name).join(', ') || '(none)'}`,
     `- Visual direction: ${spec.visualDesign?.layout ?? '(not specified)'}; ${(spec.visualDesign?.palette ?? []).join(', ') || '(no palette)'}`,
+    '- 产品设计 / Product design: '
+      + spec.productDesign.productType
+      + '; '
+      + spec.productDesign.tone
+      + '; '
+      + spec.productDesign.density,
     '',
-    '## Reference mapping', '',
+    '## 参考图映射 / Reference Mapping', '',
     ...(spec.pages ?? []).map(
       (page) => `- **${page.name}**: ${page.referenceImage ? `\`${page.referenceImage}\`` : '(none)'}`,
     ), '',
-    '## Verification plan', '',
+    '## 验证计划 / Verification Plan', '',
     '1. `npm install --ignore-scripts`',
     '2. `npm run build`',
     '3. start preview server on a free port',
