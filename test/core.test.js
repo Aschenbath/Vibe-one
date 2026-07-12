@@ -162,9 +162,65 @@ test('package test command is compatible with the Node 20 CI runner', async () =
 });
 
 test('builder prompt keeps model output within the gateway-friendly MVP budget', () => {
-  assert.match(BUILDER_SYSTEM, /at most 8 files/i);
-  assert.match(BUILDER_SYSTEM, /12,000 characters/i);
+  assert.match(BUILDER_SYSTEM, /at most 12 files/i);
+  assert.match(BUILDER_SYSTEM, /24,000 characters/i);
   assert.match(BUILDER_SYSTEM, /src\/App\.jsx/);
+  assert.match(BUILDER_SYSTEM, /CSS variables.*design tokens.*actually use/is);
+  assert.match(BUILDER_SYSTEM, /realistic.*consistent mock data/is);
+  assert.match(BUILDER_SYSTEM, /loading.*empty.*error.*success.*trigger/is);
+  assert.match(BUILDER_SYSTEM, /44px.*targets/is);
+  assert.match(BUILDER_SYSTEM, /style.*button.*input.*select.*number spinner/is);
+  assert.match(BUILDER_SYSTEM, /responsive.*page boundaries/is);
+  assert.match(BUILDER_SYSTEM, /do not use Emoji.*functional icons/is);
+  assert.match(BUILDER_SYSTEM, /lorem ipsum.*Card 1.*Item A/is);
+});
+
+test('builder exposes the fixed dependency and output limit contracts', async () => {
+  const { APP_DEPENDENCIES, BUILD_LIMITS } = await import('../src/core/builder.js');
+
+  assert.equal(APP_DEPENDENCIES.dependencies['lucide-react'], '^0.468.0');
+  assert.deepEqual(BUILD_LIMITS, { maxFiles: 12, maxCharacters: 24_000 });
+});
+
+test('generated file limits accept the exact file and character boundaries', async () => {
+  const { validateGeneratedFiles } = await import('../src/core/builder.js');
+  const files = Array.from({ length: 12 }, (_, index) => ({
+    path: 'src/file-' + index + '.js',
+    content: index === 0 ? 'x'.repeat(23_989) : 'x',
+  }));
+
+  assert.equal(files.reduce((total, file) => total + file.content.length, 0), 24_000);
+  assert.equal(validateGeneratedFiles(files), files);
+});
+
+test('generated file limits reject excess and malformed model output with a stable code', async () => {
+  const { validateGeneratedFiles } = await import('../src/core/builder.js');
+  const tooMany = Array.from({ length: 13 }, (_, index) => ({
+    path: 'src/file-' + index + '.js',
+    content: 'x',
+  }));
+
+  assert.throws(
+    () => validateGeneratedFiles(tooMany),
+    (error) => error.code === 'BUILD_OUTPUT_LIMIT' && /13 files.*12/i.test(error.message),
+  );
+  assert.throws(
+    () => validateGeneratedFiles([{ path: 'src/App.jsx', content: 'x'.repeat(24_001) }]),
+    (error) => error.code === 'BUILD_OUTPUT_LIMIT' && /24001.*24000/.test(error.message),
+  );
+  for (const files of [
+    undefined,
+    null,
+    {},
+    [],
+    [{ path: 'src/App.jsx' }],
+    [{ path: 'src/App.jsx', content: 42 }],
+  ]) {
+    assert.throws(
+      () => validateGeneratedFiles(files),
+      (error) => error.code === 'BUILD_OUTPUT_LIMIT',
+    );
+  }
 });
 
 test('planned and successful runs exit cleanly', () => {

@@ -16,10 +16,15 @@ import path from 'node:path';
 const FILE_MARK = '=== FILE:';
 const END_MARK = '=== END ===';
 
+export const BUILD_LIMITS = {
+  maxFiles: 12,
+  maxCharacters: 24_000,
+};
+
 export const BUILDER_SYSTEM = `You are the builder of a bounded app-replication pipeline.
 Target stack: React 18 + Vite, plain CSS, mock data in src/data/.
 The build system already provides package.json and vite.config.js - DO NOT output them.
-Available dependencies (nothing else is installed): react, react-dom, react-router-dom.
+Available dependencies (nothing else is installed): react, react-dom, react-router-dom, lucide-react.
 
 OUTPUT FORMAT - emit each file as a block, and nothing else (no prose, no markdown fences):
 ${FILE_MARK} relative/path/here
@@ -34,9 +39,15 @@ Rules:
 - Must include index.html at the root and src/main.jsx as the entry.
 - One component per planned page; implement the planned interactions with real state updates.
 - Use accessible labels/roles (real <button>, <input> with placeholder/label) so interactions are testable.
-- Hard response budget: at most 8 files and about 12,000 characters total.
+- Hard response budget: at most 12 files and 24,000 characters total.
 - Prefer index.html, src/main.jsx, src/App.jsx, src/styles.css, and at most a few small data/helper files.
 - Keep page components together in src/App.jsx when that avoids boilerplate; omit long comments and repeated CSS.
+- Define CSS variables from the approved design tokens and actually use those design tokens in components.
+- Use realistic, consistent mock data; never use lorem ipsum, Card 1, or Item A placeholders.
+- Implement loading, empty, error, and success states with concrete triggers from the approved product design.
+- Keep interactive controls as at least 44px targets and preserve responsive page boundaries without horizontal overflow.
+- Style every native button, input, select, and number spinner control.
+- Do not use Emoji as functional icons; use lucide-react icons where an icon is required.
 - No binary files. No placeholder TODO stubs for core flows.`;
 
 // Files only the pipeline may write. Model attempts to write these are rejected.
@@ -50,11 +61,12 @@ const FORBIDDEN_FILES = new Set([
   '.env',
 ]);
 
-const APP_DEPENDENCIES = {
+export const APP_DEPENDENCIES = {
   dependencies: {
     react: '^18.3.1',
     'react-dom': '^18.3.1',
     'react-router-dom': '^6.28.0',
+    'lucide-react': '^0.468.0',
   },
   devDependencies: {
     vite: '^5.4.11',
@@ -83,8 +95,7 @@ export async function build(ctx, provider, config, spec) {
   const { content, usage } = await provider.chat({ system: BUILDER_SYSTEM, user });
   ctx.addUsage(usage);
 
-  const files = parseFileBlocks(content);
-  if (!files.length) throw new Error('builder returned no parseable file blocks');
+  const files = validateGeneratedFiles(parseFileBlocks(content));
 
   for (const file of files) {
     await writeModelFile(ctx, file);
@@ -116,6 +127,42 @@ export function parseFileBlocks(text) {
   }
   if (current) files.push(finishBlock(current));
   return files.filter((f) => f.path && f.content.trim().length);
+}
+
+export function validateGeneratedFiles(files, limits = BUILD_LIMITS) {
+  if (!Array.isArray(files) || files.length === 0) {
+    throw buildOutputLimit('generated files must be a non-empty array');
+  }
+  if (files.length > limits.maxFiles) {
+    throw buildOutputLimit(
+      'received ' + files.length + ' files; limit is ' + limits.maxFiles,
+    );
+  }
+
+  let characters = 0;
+  for (const file of files) {
+    if (
+      !file
+      || typeof file.path !== 'string'
+      || !file.path.trim()
+      || typeof file.content !== 'string'
+    ) {
+      throw buildOutputLimit('every generated file requires a path and string content');
+    }
+    characters += file.content.length;
+  }
+  if (characters > limits.maxCharacters) {
+    throw buildOutputLimit(
+      'received ' + characters + ' content characters; limit is ' + limits.maxCharacters,
+    );
+  }
+  return files;
+}
+
+function buildOutputLimit(detail) {
+  const error = new Error('BUILD_OUTPUT_LIMIT: ' + detail);
+  error.code = 'BUILD_OUTPUT_LIMIT';
+  return error;
 }
 
 function finishBlock(block) {
