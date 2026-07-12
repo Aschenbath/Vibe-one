@@ -338,6 +338,108 @@ test('collector captures ordered desktop-mobile evidence and closes browser reso
   }
 });
 
+test('collector audits only visible text and reports a hidden-only main as empty', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-ui-visible-text-'));
+  const server = http.createServer((request, response) => {
+    const hiddenOnly = request.url?.startsWith('/hidden-only');
+    const main = hiddenOnly
+      ? [
+          '<main><div class=hidden-noise>Error: hidden',
+          '<pre>    at fake.js:1:1</pre><span>Card 1 TODO</span></div></main>',
+        ].join('')
+      : [
+          '<main><h1>Clean workspace</h1><p>Operational data is ready.</p>',
+          '<div class=hidden-noise>Error: hidden',
+          '<pre>    at fake.js:1:1</pre><span>Card 1 TODO</span></div>',
+          '</main>',
+        ].join('');
+    const html = [
+      '<!doctype html><html><head><meta charset=utf-8><style>',
+      'body{margin:0;color:#17202a;background:#fff;font:16px Arial,sans-serif}',
+      'nav{height:48px;padding:14px 20px}main{padding:24px;min-height:400px}',
+      '.hidden-noise{opacity:0}',
+      '</style></head><body><nav aria-label=Primary>Quality workspace</nav>',
+      main,
+      '</body></html>',
+    ].join('');
+    response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    response.end(html);
+  });
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const baseUrl = 'http://127.0.0.1:' + server.address().port + '/';
+
+  try {
+    const evidence = await collectUiQuality(
+      { runDir: root, logEvent: async () => {} },
+      baseUrl,
+      [
+        { name: 'Clean', route: '/clean' },
+        { name: 'Hidden only', route: '/hidden-only' },
+      ],
+    );
+    const clean = evidence.results.slice(0, 2);
+    const hiddenOnly = evidence.results.slice(2);
+    assert.ok(clean.every((result) => result.pass));
+    assert.ok(clean.every((result) => !result.failures.some(
+      (failure) => failure.code === 'PLACEHOLDER_CONTENT'
+        || failure.code === 'ERROR_STACK_VISIBLE',
+    )));
+    assert.ok(hiddenOnly.every((result) => result.failures.some(
+      (failure) => failure.code === 'EMPTY_MAIN_REGION',
+    )));
+    assert.ok(hiddenOnly.every((result) => !result.failures.some(
+      (failure) => failure.code === 'PLACEHOLDER_CONTENT'
+        || failure.code === 'ERROR_STACK_VISIBLE',
+    )));
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('collector rejects protocol-relative routes before escape navigation', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-ui-route-safety-'));
+  let escapeRequests = 0;
+  const baseServer = http.createServer((_request, response) => {
+    response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    response.end('<!doctype html><nav>Base</nav><main><h1>Base</h1></main>');
+  });
+  const escapeServer = http.createServer((_request, response) => {
+    escapeRequests += 1;
+    response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    response.end('<!doctype html><nav>Escape</nav><main><h1>Escape</h1></main>');
+  });
+  for (const server of [baseServer, escapeServer]) {
+    await new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', resolve);
+    });
+  }
+  const baseUrl = 'http://127.0.0.1:' + baseServer.address().port + '/';
+  const escapeRoute = '//127.0.0.1:' + escapeServer.address().port + '/escape';
+
+  try {
+    await assert.rejects(
+      collectUiQuality(
+        { runDir: root, logEvent: async () => {} },
+        baseUrl,
+        [{ name: 'Escape', route: escapeRoute }],
+      ),
+      { code: 'UI_QUALITY_ROUTE_INVALID' },
+    );
+    assert.equal(escapeRequests, 0);
+  } finally {
+    await Promise.all([
+      new Promise((resolve) => baseServer.close(resolve)),
+      new Promise((resolve) => escapeServer.close(resolve)),
+    ]);
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 function greenSnapshot(overrides = {}) {
   return {
     page: 'Workspace',

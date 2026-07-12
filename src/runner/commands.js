@@ -169,6 +169,14 @@ export async function collectUiQuality(
   pages,
   requiredStates = [],
 ) {
+  const pageTargets = pages.map((pageSpec) => {
+    const route = pageSpec.route ?? '/';
+    return {
+      pageSpec,
+      route,
+      url: localPreviewUrl(baseUrl, route),
+    };
+  });
   const qualityDir = ctx.qualityDir ?? path.join(ctx.runDir, 'quality');
   await fs.mkdir(qualityDir, { recursive: true });
   const stateNames = requiredStates
@@ -179,14 +187,12 @@ export async function collectUiQuality(
   const results = [];
 
   try {
-    for (let pageIndex = 0; pageIndex < pages.length; pageIndex += 1) {
-      const pageSpec = pages[pageIndex];
+    for (let pageIndex = 0; pageIndex < pageTargets.length; pageIndex += 1) {
+      const { pageSpec, route, url } = pageTargets[pageIndex];
       for (const [viewportName, viewport] of Object.entries(UI_VIEWPORTS)) {
         let browserPage;
         try {
           browserPage = await browser.newPage({ viewport });
-          const route = pageSpec.route ?? '/';
-          const url = new URL(route, baseUrl).href;
           await browserPage.goto(url, {
             waitUntil: 'networkidle',
             timeout: 30_000,
@@ -363,6 +369,43 @@ export async function runScenarios(ctx, baseUrl, scenarios, viewport) {
   return results;
 }
 
+function localPreviewUrl(baseUrl, route) {
+  let previewBase;
+  try {
+    previewBase = new URL(baseUrl);
+  } catch {
+    throw invalidUiQualityRoute();
+  }
+
+  const routeValue = String(route ?? '/');
+  const routeForCheck = routeValue.trim();
+  if (
+    /^[a-z][a-z\d+.-]*:/iu.test(routeForCheck)
+    || routeForCheck.startsWith('//')
+  ) {
+    throw invalidUiQualityRoute();
+  }
+
+  let resolved;
+  try {
+    resolved = new URL(routeValue, previewBase);
+  } catch {
+    throw invalidUiQualityRoute();
+  }
+  if (resolved.origin !== previewBase.origin) {
+    throw invalidUiQualityRoute();
+  }
+  return resolved.href;
+}
+
+function invalidUiQualityRoute() {
+  const error = new Error(
+    'UI_QUALITY_ROUTE_INVALID: route must stay on the preview origin',
+  );
+  error.code = 'UI_QUALITY_ROUTE_INVALID';
+  return error;
+}
+
 function collectDomSnapshot({ pageSpec, viewportName, requiredStates }) {
   const interactiveSelector = [
     'button',
@@ -410,6 +453,30 @@ function collectDomSnapshot({ pageSpec, viewportName, requiredStates }) {
       && !element.disabled
       && element.getAttribute('aria-disabled') !== 'true'
     );
+  }
+
+  function collectVisibleText(rootElement) {
+    if (!(rootElement instanceof Element) || !isVisible(rootElement)) return '';
+    const walker = document.createTreeWalker(
+      rootElement,
+      NodeFilter.SHOW_TEXT,
+    );
+    const chunks = [];
+    let visitedNodes = 0;
+    let collectedCharacters = 0;
+    while (visitedNodes < 1_000 && collectedCharacters < 20_000) {
+      const node = walker.nextNode();
+      if (!node) break;
+      visitedNodes += 1;
+      if (!node.parentElement || !isVisible(node.parentElement)) continue;
+      const value = String(node.textContent ?? '').replace(/\s+/g, ' ').trim();
+      if (!value) continue;
+      const remaining = 20_000 - collectedCharacters;
+      const fragment = value.slice(0, remaining);
+      chunks.push(fragment);
+      collectedCharacters += fragment.length + 1;
+    }
+    return chunks.join(' ').replace(/\s+/g, ' ').trim().slice(0, 20_000);
   }
 
   function label(element) {
@@ -640,9 +707,9 @@ function collectDomSnapshot({ pageSpec, viewportName, requiredStates }) {
     mainRegion: {
       width: mainBox?.width ?? 0,
       height: mainBox?.height ?? 0,
-      visibleText: mainElement?.innerText ?? '',
+      visibleText: collectVisibleText(mainElement),
     },
-    visibleText: body?.innerText ?? '',
+    visibleText: collectVisibleText(body),
     nativeControls,
     emojiIcons,
   };
