@@ -7,6 +7,11 @@ import path from 'node:path';
 import { applyPatch, parseFileBlocks } from './builder.js';
 
 const DIAG_MARK = '=== DIAGNOSIS ===';
+export const UI_EVIDENCE_LIMITS = Object.freeze({
+  maxFiles: 8,
+  maxFileBytes: 8 * 1024 * 1024,
+  maxTotalBytes: 24 * 1024 * 1024,
+});
 const SYSTEM = `You are the fixer of a bounded app-replication pipeline.
 You get failing command output, failing review checks, AND the current source of the app.
 Fix the ACTUAL cause shown in the source - do not guess. A missing export means either
@@ -71,6 +76,7 @@ export async function createFixerUserContent({
     'Return corrected files.',
   ].join('\n');
   if (!visualFailures.length && !uiFailures.length) return text;
+  const uiEvidenceFiles = new Set(await validateUiEvidenceFiles(uiFailures));
 
   const parts = [{
     type: 'text',
@@ -99,7 +105,11 @@ export async function createFixerUserContent({
       type: 'text',
       text: `${formatUiFailure(item)}. Current generated UI screenshot follows.`,
     });
-    if (item.actualFile && !attachedUiScreenshots.has(item.actualFile)) {
+    if (
+      item.actualFile
+      && uiEvidenceFiles.has(item.actualFile)
+      && !attachedUiScreenshots.has(item.actualFile)
+    ) {
       attachedUiScreenshots.add(item.actualFile);
       parts.push(await fileImagePart(item.actualFile, 'image/png'));
     }
@@ -107,7 +117,11 @@ export async function createFixerUserContent({
   return parts;
 }
 
-async function fileImagePart(file, type, maxBytes = 8 * 1024 * 1024) {
+async function fileImagePart(
+  file,
+  type,
+  maxBytes = UI_EVIDENCE_LIMITS.maxFileBytes,
+) {
   const bytes = await fs.readFile(file);
   if (bytes.length > maxBytes) {
     const error = new Error('FIXER_IMAGE_TOO_LARGE: repair image exceeds 8 MiB');
@@ -118,6 +132,39 @@ async function fileImagePart(file, type, maxBytes = 8 * 1024 * 1024) {
     type: 'image_url',
     image_url: { url: `data:${type};base64,${bytes.toString('base64')}` },
   };
+}
+
+export async function validateUiEvidenceFiles(uiFailures = []) {
+  const files = [...new Set(
+    uiFailures.map((failure) => failure?.actualFile).filter(Boolean),
+  )];
+  if (files.length > UI_EVIDENCE_LIMITS.maxFiles) {
+    throw uiEvidenceLimit('too many UI screenshots');
+  }
+
+  let totalBytes = 0;
+  for (const file of files) {
+    let stat;
+    try {
+      stat = await fs.stat(file);
+    } catch {
+      throw uiEvidenceLimit('UI screenshot is unavailable');
+    }
+    if (!stat.isFile() || stat.size > UI_EVIDENCE_LIMITS.maxFileBytes) {
+      throw uiEvidenceLimit('UI screenshot exceeds the per-file limit');
+    }
+    totalBytes += stat.size;
+    if (totalBytes > UI_EVIDENCE_LIMITS.maxTotalBytes) {
+      throw uiEvidenceLimit('UI screenshots exceed the aggregate limit');
+    }
+  }
+  return files;
+}
+
+function uiEvidenceLimit(detail) {
+  const error = new Error(`UI_EVIDENCE_LIMIT: ${detail}`);
+  error.code = 'UI_EVIDENCE_LIMIT';
+  return error;
 }
 
 // Reads the current model-authored source under appDir (skips node_modules,

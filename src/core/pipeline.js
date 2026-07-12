@@ -19,7 +19,13 @@ import {
 } from '../runner/commands.js';
 import { writeReport } from '../reporter/deliveryReport.js';
 
-export async function runPipeline({ targetDir, config, planOnly = false, provider: injectedProvider }) {
+export async function runPipeline({
+  targetDir,
+  config,
+  planOnly = false,
+  provider: injectedProvider,
+  uiCollector = collectUiQuality,
+}) {
   const ctx = await createRunContext(targetDir, config);
   const provider = injectedProvider ?? createProvider(config);
 
@@ -49,7 +55,14 @@ export async function runPipeline({ targetDir, config, planOnly = false, provide
 
     // verify + bounded repair
     for (rounds = 0; rounds <= config.maxRepairRounds; rounds++) {
-      const verdict = await verifyOnce(ctx, config, spec, rounds);
+      const verdict = await verifyOnce(
+        ctx,
+        config,
+        spec,
+        rounds,
+        uiCollector,
+        qualityDir,
+      );
       finalReview = verdict.reviewResult;
       shots = verdict.shots;
       scenarioResults = verdict.scenarioResults ?? [];
@@ -127,8 +140,8 @@ export async function runPipeline({ targetDir, config, planOnly = false, provide
 
   async function finish() {
     const uiFailed = finalReview?.uiQuality?.pass === false;
-    errorCode = fatal?.code
-      ? String(fatal.code)
+    errorCode = fatal
+      ? String(fatal.code || 'PIPELINE_FAILED')
       : uiFailed ? 'UI_QUALITY_FAILED' : undefined;
     await fs.writeFile(
       path.join(qualityDir, 'history.json'),
@@ -166,7 +179,7 @@ export async function runPipeline({ targetDir, config, planOnly = false, provide
 }
 
 // One full verification pass: install -> build -> preview -> screenshots -> review.
-async function verifyOnce(ctx, config, spec, round) {
+async function verifyOnce(ctx, config, spec, round, uiCollector, qualityDir) {
   const install = await npmInstall(ctx);
   if (install.exitCode !== 0) {
     return { install, build: null, shots: [], reviewResult: failEarly('npm install failed') };
@@ -203,16 +216,14 @@ async function verifyOnce(ctx, config, spec, round) {
     };
   }
 
-  try {
-    uiQuality = safeUiQualityEvidence(await collectUiQuality(
-      ctx,
-      preview.url,
-      spec.pages ?? [],
-      spec.productDesign?.requiredStates ?? [],
-    ));
-  } catch {
-    uiQuality = failedUiQualityEvidence();
-  }
+  const collectedUiQuality = await uiCollector(
+    ctx,
+    preview.url,
+    spec.pages ?? [],
+    spec.productDesign?.requiredStates ?? [],
+  );
+  await qualifyUiScreenshots(qualityDir, collectedUiQuality, round);
+  uiQuality = safeUiQualityEvidence(collectedUiQuality);
   await ctx.logEvent('quality:audit', {
     summary: uiQuality.summary.pass
       ? 'UI quality checks pass'
@@ -313,17 +324,6 @@ function safeUiQualityEvidence(value = {}) {
   };
 }
 
-function failedUiQualityEvidence() {
-  const failure = sanitizeUiFailure({
-    code: 'UI_QUALITY_FAILED',
-    detail: 'UI quality collection failed',
-  });
-  return {
-    results: [],
-    summary: { pass: false, failures: [failure] },
-  };
-}
-
 async function buildUiFailures(qualityDir, failures) {
   const items = [];
   for (const failure of failures) {
@@ -338,6 +338,42 @@ async function buildUiFailures(qualityDir, failures) {
     }
   }
   return items;
+}
+
+async function qualifyUiScreenshots(qualityDir, uiQuality, round) {
+  const renamed = new Map();
+  for (const result of uiQuality?.results ?? []) {
+    const sourceName = path.posix.basename(
+      path.win32.basename(String(result.screenshot ?? '')),
+    );
+    if (!sourceName) continue;
+    if (!renamed.has(sourceName)) {
+      const targetName = await availableRoundScreenshotName(
+        qualityDir,
+        sourceName,
+        round,
+      );
+      await fs.rename(
+        path.join(qualityDir, sourceName),
+        path.join(qualityDir, targetName),
+      );
+      renamed.set(sourceName, targetName);
+    }
+    result.screenshot = renamed.get(sourceName);
+  }
+}
+
+async function availableRoundScreenshotName(qualityDir, sourceName, round) {
+  const extension = path.extname(sourceName) || '.png';
+  const stem = path.basename(sourceName, extension);
+  for (let suffix = 1; ; suffix += 1) {
+    const candidate = `${stem}-round-${round}${suffix === 1 ? '' : `-${suffix}`}${extension}`;
+    try {
+      await fs.access(path.join(qualityDir, candidate));
+    } catch {
+      return candidate;
+    }
+  }
 }
 
 function finiteNumber(value) {

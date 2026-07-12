@@ -587,7 +587,7 @@ test('UI quality failure sends screenshots to the fixer and passes after one rep
     assert.match(provider.observed.promptText, /HIT_TARGET_TOO_SMALL/);
     assert.match(
       provider.observed.promptText,
-      /quality-1-overview-(desktop|mobile)\.png/,
+      /quality-1-overview-(desktop|mobile)-round-0(?:-\d+)?\.png/,
     );
     assert.equal(provider.observed.imageCount, 2);
     assert.doesNotMatch(
@@ -606,9 +606,30 @@ test('UI quality failure sends screenshots to the fixer and passes after one rep
       fs.readFile(path.join(qualityDir, 'round-1.json'), 'utf8'),
       fs.readFile(path.join(qualityDir, 'history.json'), 'utf8'),
     ]);
-    assert.equal(JSON.parse(roundZero).summary.pass, false);
-    assert.equal(JSON.parse(roundOne).summary.pass, true);
+    const roundZeroEvidence = JSON.parse(roundZero);
+    const roundOneEvidence = JSON.parse(roundOne);
+    assert.equal(roundZeroEvidence.summary.pass, false);
+    assert.equal(roundOneEvidence.summary.pass, true);
     assert.equal(JSON.parse(history).length, 2);
+    const roundZeroScreenshots = roundZeroEvidence.results.map(
+      (entry) => entry.screenshot,
+    );
+    const roundOneScreenshots = roundOneEvidence.results.map(
+      (entry) => entry.screenshot,
+    );
+    assert.ok(roundZeroScreenshots.every((name) => /-round-0(?:-\d+)?\.png$/.test(name)));
+    assert.ok(roundOneScreenshots.every((name) => /-round-1(?:-\d+)?\.png$/.test(name)));
+    assert.equal(
+      roundZeroScreenshots.some((name) => roundOneScreenshots.includes(name)),
+      false,
+    );
+    const [roundZeroImage, roundOneImage] = await Promise.all([
+      fs.readFile(path.join(qualityDir, roundZeroScreenshots[0])),
+      fs.readFile(path.join(qualityDir, roundOneScreenshots[0])),
+    ]);
+    assert.ok(roundZeroImage.length > 0);
+    assert.ok(roundOneImage.length > 0);
+    assert.notDeepEqual(roundZeroImage, roundOneImage);
 
     const eventsText = await fs.readFile(
       path.join(result.runDir, 'logs', 'events.jsonl'),
@@ -667,6 +688,61 @@ test('exhausted UI quality review returns the stable failure code', { skip: !ENA
     assert.ok(result.qualityHistory[0].summary.failures.every(
       (failure) => failure.code === 'HIT_TARGET_TOO_SMALL',
     ));
+  } finally {
+    await fs.rm(tmpRoot, { recursive: true, force: true });
+  }
+});
+
+test('coded UI collector infrastructure errors stay fatal and skip repair', { skip: !ENABLED, timeout: 300_000 }, async () => {
+  const tmpRoot = await fs.realpath(
+    await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-one-ui-collector-fatal-')),
+  );
+  const targetDir = path.join(tmpRoot, 'ui-collector-fatal');
+  const brief = '# Expenses\nList expenses with a total and an Add button.\n';
+  await fs.mkdir(path.join(targetDir, 'input'), { recursive: true });
+  await fs.writeFile(path.join(targetDir, 'input', 'brief.md'), brief);
+  const provider = createStubProvider();
+  const buildChat = provider.chat.bind(provider);
+  let chatCalls = 0;
+  provider.chat = async (request) => {
+    chatCalls += 1;
+    return buildChat(request);
+  };
+  const uiCollector = async () => {
+    const error = new Error(
+      'UI_QUALITY_ROUTE_INVALID: https://private.invalid D:\\private\\artifact',
+    );
+    error.code = 'UI_QUALITY_ROUTE_INVALID';
+    throw error;
+  };
+  const config = {
+    stack: 'react-vite',
+    viewport: { width: 390, height: 844 },
+    maxRepairRounds: 1,
+    model: 'stub-ui-collector-fatal',
+    baseUrl: 'https://private.invalid/v1',
+    temperature: 0.2,
+    brief,
+    runsRoot: path.join(tmpRoot, 'runs'),
+  };
+
+  try {
+    const result = await runPipeline({
+      targetDir,
+      config,
+      provider,
+      uiCollector,
+    });
+    assert.equal(result.status, 'failed');
+    assert.equal(result.errorCode, 'UI_QUALITY_ROUTE_INVALID');
+    assert.equal(chatCalls, 1, 'collector infrastructure failure must not call fixer');
+    assert.equal(result.qualityHistory.length, 0);
+    const events = await fs.readFile(
+      path.join(result.runDir, 'logs', 'events.jsonl'),
+      'utf8',
+    );
+    assert.match(events, /"type":"fatal".*"code":"UI_QUALITY_ROUTE_INVALID"/);
+    assert.doesNotMatch(events, /private\.invalid|D:\\private|artifact/);
   } finally {
     await fs.rm(tmpRoot, { recursive: true, force: true });
   }

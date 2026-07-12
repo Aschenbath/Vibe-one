@@ -8,7 +8,13 @@ import { BUILDER_SYSTEM, safeJoin } from '../src/core/builder.js';
 import { parseFileBlocks } from '../src/core/builder.js';
 import { createProvider, extractJson, resolveRequestTimeout } from '../src/providers/openaiCompatible.js';
 import { review } from '../src/core/reviewer.js';
-import { createFixerUserContent, describeFailure, gatherSource } from '../src/core/fixer.js';
+import {
+  UI_EVIDENCE_LIMITS,
+  createFixerUserContent,
+  describeFailure,
+  gatherSource,
+  validateUiEvidenceFiles,
+} from '../src/core/fixer.js';
 import { writeReport } from '../src/reporter/deliveryReport.js';
 import { exitCodeForStatus } from '../src/cli/status.js';
 import { createRunContext } from '../src/core/runContext.js';
@@ -586,6 +592,44 @@ test('pipeline fails before build when a reference is not mapped by the planner'
   }
 });
 
+test('pipeline returns PIPELINE_FAILED for an uncoded infrastructure exception', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-pipeline-uncoded-'));
+  const privatePath = 'D:\\private\\vibe-secret\\artifact.txt';
+  const config = {
+    stack: 'react-vite',
+    viewport: { width: 390, height: 844 },
+    maxRepairRounds: 0,
+    model: 'stub',
+    baseUrl: 'https://private.invalid/v1',
+    brief: '# Brief',
+    references: [],
+    runsRoot: path.join(root, 'runs'),
+  };
+  const provider = {
+    chatJson: async () => {
+      throw new Error(`browser failed at ${privatePath}`);
+    },
+  };
+
+  try {
+    const result = await runPipeline({
+      targetDir: path.join(root, 'target'),
+      config,
+      provider,
+    });
+    assert.equal(result.status, 'failed');
+    assert.equal(result.errorCode, 'PIPELINE_FAILED');
+    const events = await fs.readFile(
+      path.join(result.runDir, 'logs', 'events.jsonl'),
+      'utf8',
+    );
+    assert.match(events, /"type":"fatal".*"summary":"PIPELINE_FAILED"/);
+    assert.doesNotMatch(events, /private\.invalid|vibe-secret|artifact\.txt/);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 function visualDesignFixture() {
   return {
     layout: 'single page',
@@ -977,6 +1021,38 @@ test('UI repair content includes diagnostics and generated screenshots without r
     assert.match(content[0].text, /UI quality audit failed/);
     assert.match(content[1].text, /HIT_TARGET_TOO_SMALL.*总览.*mobile.*筛选 32x32/s);
     assert.doesNotMatch(content[1].text, /Reference image follows|vibe-ui-fix-/);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('UI repair evidence rejects more than the bounded screenshot count', async () => {
+  const failures = Array.from(
+    { length: 9 },
+    (_, index) => ({ actualFile: `quality-${index}.png` }),
+  );
+  await assert.rejects(
+    validateUiEvidenceFiles(failures),
+    (error) => error.code === 'UI_EVIDENCE_LIMIT',
+  );
+  assert.equal(UI_EVIDENCE_LIMITS.maxFiles, 8);
+});
+
+test('UI repair evidence rejects aggregate bytes before reading image content', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-ui-evidence-limit-'));
+  const files = [];
+  try {
+    for (let index = 0; index < 4; index += 1) {
+      const file = path.join(root, `quality-${index}.png`);
+      await fs.writeFile(file, '');
+      await fs.truncate(file, 6 * 1024 * 1024 + 1);
+      files.push({ actualFile: file });
+    }
+    await assert.rejects(
+      validateUiEvidenceFiles(files),
+      (error) => error.code === 'UI_EVIDENCE_LIMIT',
+    );
+    assert.equal(UI_EVIDENCE_LIMITS.maxTotalBytes, 24 * 1024 * 1024);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
