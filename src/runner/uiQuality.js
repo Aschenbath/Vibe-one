@@ -6,14 +6,20 @@ export const UI_VIEWPORTS = Object.freeze({
 const PLACEHOLDER_CONTENT = /lorem ipsum|Card\s+\d+|Item\s+[A-Z]\b|\bTODO\b|placeholder text|sample data/i;
 const ERROR_STACK = /(?:^|\n)\s*(?:Error|TypeError|ReferenceError|SyntaxError|RangeError):[^\n]*(?:\n\s+at\s+)/m;
 
-export function contrastRatio(foreground, background) {
+export function contrastRatio(foreground, background, backdrop = '#ffffff') {
   const foregroundColor = parseColor(foreground);
   const backgroundColor = parseColor(background);
-  if (!foregroundColor || !backgroundColor) return null;
+  const backdropColor = parseColor(backdrop);
+  if (!foregroundColor || !backgroundColor || !backdropColor) return null;
+  const backdropRgb = composite(
+    backdropColor.channels,
+    backdropColor.alpha,
+    [255, 255, 255],
+  );
   const backgroundRgb = composite(
     backgroundColor.channels,
     backgroundColor.alpha,
-    [255, 255, 255],
+    backdropRgb,
   );
   const foregroundRgb = composite(
     foregroundColor.channels,
@@ -116,7 +122,11 @@ export function auditPageSnapshot(snapshot = {}) {
   }
 
   for (const sample of snapshot.textSamples ?? []) {
-    const ratio = contrastRatio(sample?.foreground, sample?.background);
+    const ratio = contrastRatio(
+      sample?.foreground,
+      sample?.background,
+      sample?.backdrop ?? '#ffffff',
+    );
     const fontSize = numberOrZero(sample?.fontSize);
     const fontWeight = numberOrZero(sample?.fontWeight);
     const largeText = fontSize >= 24 || (fontSize >= 18.66 && fontWeight >= 700);

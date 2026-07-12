@@ -22,6 +22,14 @@ test('UI viewport and WCAG contrast contracts are deterministic', () => {
   assert.ok(translucentBackground > 5.2 && translucentBackground < 5.4);
   assert.ok(unrounded > 4.54 && unrounded < 4.55);
   assert.notEqual(unrounded, 4.54);
+  assert.equal(
+    contrastRatio('#000', 'rgba(255, 255, 255, 0)', '#000'),
+    1,
+  );
+  assert.equal(
+    contrastRatio('#000', 'rgba(255, 255, 255, 0)', '#fff'),
+    21,
+  );
   assert.equal(contrastRatio('invalid', '#fff'), null);
 });
 
@@ -138,6 +146,16 @@ test('contrast audit uses WCAG AA thresholds and reports invalid colors', () => 
       fontWeight: 400,
     }],
   }));
+  const transparentOnDark = auditPageSnapshot(greenSnapshot({
+    textSamples: [{
+      text: '透明背景正文',
+      foreground: '#000',
+      background: 'rgba(255, 255, 255, 0)',
+      backdrop: '#000',
+      fontSize: 16,
+      fontWeight: 400,
+    }],
+  }));
 
   assert.deepEqual(normal.failures.map((failure) => failure.code), ['LOW_CONTRAST']);
   assert.equal(large.pass, true);
@@ -149,6 +167,10 @@ test('contrast audit uses WCAG AA thresholds and reports invalid colors', () => 
   assert.equal(boldLarge.pass, true);
   assert.deepEqual(invalid.failures.map((failure) => failure.code), ['LOW_CONTRAST']);
   assert.match(invalid.failures[0].detail, /invalid color/i);
+  assert.deepEqual(
+    transparentOnDark.failures.map((failure) => failure.code),
+    ['LOW_CONTRAST'],
+  );
 });
 
 test('ordinary multilingual prose and optional empty evidence avoid false positives', () => {
