@@ -192,7 +192,17 @@ function createVisualProvider({ repair = false } = {}) {
       assert.equal(user.filter((part) => part.type === 'image_url').length, 1);
       return { json: VISUAL_SPEC, usage, model: 'stub-visual' };
     },
-    async chat({ user }) {
+    async chat({ system, user }) {
+      if (/single-pass UI polisher/i.test(system)) {
+        return {
+          content: fileBlocks([{
+            path: 'src/styles.css',
+            content: `${VISUAL_CSS}\n/* polish verified */`,
+          }]),
+          usage,
+          model: 'stub-visual',
+        };
+      }
       chatCalls += 1;
       if (chatCalls === 1) {
         return {
@@ -292,13 +302,53 @@ const SPEC = {
 // uses chat and expects the delimiter file protocol. Deterministic, no network.
 function createStubProvider() {
   const usage = { prompt_tokens: 10, completion_tokens: 20 };
-  const fileBlocks = APP_FILES.map((f) => `=== FILE: ${f.path}\n${f.content}=== END ===`).join('\n');
+  const buildContent = APP_FILES.map((f) => `=== FILE: ${f.path}\n${f.content}=== END ===`).join('\n');
   return {
-    async chat() {
-      return { content: fileBlocks, usage, model: 'stub' };
+    async chat({ system }) {
+      if (/single-pass UI polisher/i.test(system)) {
+        const app = APP_FILES.find((file) => file.path === 'src/App.jsx');
+        return {
+          content: fileBlocks([{
+            ...app,
+            content: app.content.replace('<main style=', `<main data-polish-marker='verified' style=`),
+          }]),
+          usage,
+          model: 'stub',
+        };
+      }
+      return { content: buildContent, usage, model: 'stub' };
     },
     async chatJson() {
       return { json: SPEC, usage, model: 'stub' };
+    },
+  };
+}
+
+function createPolishLifecycleProvider({ breakInteraction = false } = {}) {
+  const usage = { prompt_tokens: 10, completion_tokens: 20 };
+  const observed = { buildCalls: 0, polishCalls: 0, polishImages: 0, polishText: '' };
+  const draftApp = APP_FILES.find((file) => file.path === 'src/App.jsx').content;
+  const polishedApp = breakInteraction
+    ? draftApp.replace(`note: 'New item'`, `note: 'Broken item'`)
+    : draftApp.replace('<main style=', `<main data-polish-marker='verified' style=`);
+  return {
+    observed,
+    async chatJson() {
+      return { json: SPEC, usage, model: 'stub-polish-lifecycle' };
+    },
+    async chat({ system, user }) {
+      if (/single-pass UI polisher/i.test(system)) {
+        observed.polishCalls += 1;
+        observed.polishImages = user.filter((part) => part.type === 'image_url').length;
+        observed.polishText = user.find((part) => part.type === 'text')?.text ?? '';
+        return {
+          content: `=== FILE: src/App.jsx\n${polishedApp}\n=== END ===`,
+          usage,
+          model: 'stub-polish-lifecycle',
+        };
+      }
+      observed.buildCalls += 1;
+      return { content: fileBlocks(APP_FILES), usage, model: 'stub-polish-lifecycle' };
     },
   };
 }
@@ -364,7 +414,14 @@ function createRepairingNotesProvider() {
     async chatJson() {
       return { json: NOTES_SPEC, usage, model: 'stub-repair' };
     },
-    async chat() {
+    async chat({ system }) {
+      if (/single-pass UI polisher/i.test(system)) {
+        return {
+          content: `=== FILE: src/App.jsx\n${FIXED_NOTES_APP}// polish verified\n=== END ===`,
+          usage,
+          model: 'stub-repair',
+        };
+      }
       chatCalls += 1;
       if (chatCalls === 1) {
         const files = [...NOTES_SHARED_FILES, { path: 'src/App.jsx', content: BROKEN_NOTES_APP }];
@@ -457,7 +514,17 @@ function createUiRepairProvider() {
     async chatJson() {
       return { json: UI_REPAIR_SPEC, usage, model: 'stub-ui-repair' };
     },
-    async chat({ user }) {
+    async chat({ system, user }) {
+      if (/single-pass UI polisher/i.test(system)) {
+        return {
+          content: fileBlocks([{
+            path: 'src/styles.css',
+            content: `${uiRepairCss(44)}\n/* polish verified */`,
+          }]),
+          usage,
+          model: 'stub-ui-repair',
+        };
+      }
       chatCalls += 1;
       if (chatCalls === 1) {
         return {
@@ -483,6 +550,201 @@ ${uiRepairCss(44)}
     },
   };
 }
+
+test('green draft is polished, fully reverified, and promoted before delivery', { skip: !ENABLED, timeout: 300_000 }, async () => {
+  const tmpRoot = await fs.realpath(
+    await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-one-polish-success-')),
+  );
+  const targetDir = path.join(tmpRoot, 'target');
+  const brief = '# Expenses\nList expenses with a total and an Add button.\n';
+  await fs.mkdir(path.join(targetDir, 'input'), { recursive: true });
+  await fs.writeFile(path.join(targetDir, 'input', 'brief.md'), brief);
+  const provider = createPolishLifecycleProvider();
+  const config = {
+    stack: 'react-vite',
+    viewport: { width: 390, height: 844 },
+    maxRepairRounds: 0,
+    maxPolishRounds: 1,
+    model: 'stub-polish-lifecycle',
+    baseUrl: 'http://stub.local/v1',
+    temperature: 0.2,
+    brief,
+    references: [],
+    visualThreshold: 0.62,
+    runsRoot: path.join(tmpRoot, 'runs'),
+  };
+  try {
+    const result = await runPipeline({ targetDir, config, provider });
+    assert.equal(result.status, 'success');
+    assert.equal(result.errorCode, undefined);
+    assert.equal(provider.observed.buildCalls, 1);
+    assert.equal(provider.observed.polishCalls, 1);
+    assert.equal(provider.observed.polishImages, 2);
+    assert.match(provider.observed.polishText, /UI audit summary|Structured UI audit summary/i);
+    assert.deepEqual(result.polish.changedFiles, ['src/App.jsx']);
+    assert.equal(result.polish.status, 'promoted');
+    assert.equal(result.polish.draftReview.pass, true);
+    assert.equal(result.polish.candidateReview.pass, true);
+
+    const finalApp = await fs.readFile(path.join(result.runDir, 'app', 'src', 'App.jsx'), 'utf8');
+    const draftApp = await fs.readFile(
+      path.join(result.runDir, 'polish', 'draft-app', 'src', 'App.jsx'),
+      'utf8',
+    );
+    assert.match(finalApp, /data-polish-marker='verified'/);
+    assert.doesNotMatch(draftApp, /data-polish-marker/);
+    await assert.rejects(
+      fs.stat(path.join(result.runDir, 'polish', 'candidate')),
+      { code: 'ENOENT' },
+    );
+
+    const [draftQuality, polishQuality, polishVisual] = await Promise.all([
+      fs.readFile(path.join(result.runDir, 'quality', 'history.json'), 'utf8'),
+      fs.readFile(path.join(result.runDir, 'polish', 'quality', 'history.json'), 'utf8'),
+      fs.readFile(path.join(result.runDir, 'polish', 'visual', 'comparisons.json'), 'utf8'),
+    ]);
+    assert.equal(JSON.parse(draftQuality).length, 1);
+    assert.equal(JSON.parse(polishQuality).length, 1);
+    assert.equal(JSON.parse(polishVisual).length, 1);
+
+    const eventsText = await fs.readFile(
+      path.join(result.runDir, 'logs', 'events.jsonl'),
+      'utf8',
+    );
+    const events = eventsText.trim().split('\n').map((line) => JSON.parse(line));
+    const firstReview = events.findIndex((event) => event.type === 'review');
+    const polishStart = events.findIndex((event) => event.type === 'polish:start');
+    const polishApplied = events.findIndex((event) => event.type === 'polish:applied');
+    const secondReview = events.findIndex(
+      (event, index) => index > polishApplied && event.type === 'review',
+    );
+    const reportWritten = events.findIndex((event) => event.type === 'report:written');
+    assert.ok(firstReview >= 0 && firstReview < polishStart);
+    assert.ok(polishStart < polishApplied && polishApplied < secondReview);
+    assert.ok(secondReview < reportWritten);
+    assert.equal(events.filter((event) => event.type === 'review').length, 2);
+    assert.equal(events.some((event) => event.type === 'polish:failed'), false);
+  } finally {
+    await fs.rm(tmpRoot, { recursive: true, force: true });
+  }
+});
+
+test('failed polish verification keeps the working draft and returns POLISH_FAILED', { skip: !ENABLED, timeout: 300_000 }, async () => {
+  const tmpRoot = await fs.realpath(
+    await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-one-polish-failed-')),
+  );
+  const targetDir = path.join(tmpRoot, 'target');
+  const brief = '# Expenses\nList expenses with a total and an Add button.\n';
+  await fs.mkdir(path.join(targetDir, 'input'), { recursive: true });
+  await fs.writeFile(path.join(targetDir, 'input', 'brief.md'), brief);
+  const provider = createPolishLifecycleProvider({ breakInteraction: true });
+  const config = {
+    stack: 'react-vite',
+    viewport: { width: 390, height: 844 },
+    maxRepairRounds: 1,
+    maxPolishRounds: 1,
+    model: 'stub-polish-failed',
+    baseUrl: 'https://private.invalid/v1',
+    temperature: 0.2,
+    brief,
+    references: [],
+    visualThreshold: 0.62,
+    runsRoot: path.join(tmpRoot, 'runs'),
+  };
+  try {
+    const result = await runPipeline({ targetDir, config, provider });
+    assert.equal(result.status, 'failed');
+    assert.equal(result.errorCode, 'POLISH_FAILED');
+    assert.equal(provider.observed.buildCalls, 1);
+    assert.equal(provider.observed.polishCalls, 1);
+    assert.equal(result.polish.status, 'failed');
+    assert.deepEqual(result.polish.changedFiles, ['src/App.jsx']);
+    assert.equal(result.polish.draftReview.pass, true);
+    assert.equal(result.polish.candidateReview.pass, false);
+
+    const original = await fs.readFile(path.join(result.runDir, 'app', 'src', 'App.jsx'), 'utf8');
+    const candidate = await fs.readFile(
+      path.join(result.runDir, 'polish', 'candidate', 'src', 'App.jsx'),
+      'utf8',
+    );
+    assert.match(original, /note: 'New item'/);
+    assert.doesNotMatch(original, /Broken item/);
+    assert.match(candidate, /Broken item/);
+    await assert.rejects(
+      fs.stat(path.join(result.runDir, 'polish', 'draft-app')),
+      { code: 'ENOENT' },
+    );
+
+    const eventsText = await fs.readFile(
+      path.join(result.runDir, 'logs', 'events.jsonl'),
+      'utf8',
+    );
+    const events = eventsText.trim().split('\n').map((line) => JSON.parse(line));
+    const failed = events.filter((event) => event.type === 'polish:failed');
+    assert.equal(failed.length, 1);
+    assert.equal(failed[0].code, 'POLISH_FAILED');
+    assert.match(failed[0].summary, /candidate verification failed/i);
+    assert.doesNotMatch(
+      JSON.stringify(failed[0]),
+      /private\.invalid|Broken item|expected text|[A-Z]:\\/i,
+    );
+    assert.doesNotMatch(eventsText, /private\.invalid|Broken item|[A-Z]:\\/i);
+    assert.equal(events.filter((event) => event.type === 'fix:start').length, 0);
+    assert.equal(events.filter((event) => event.type === 'review').length, 2);
+  } finally {
+    await fs.rm(tmpRoot, { recursive: true, force: true });
+  }
+});
+
+test('plan-only pipeline never builds or polishes', { skip: !ENABLED, timeout: 30_000 }, async () => {
+  const tmpRoot = await fs.realpath(
+    await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-one-polish-plan-only-')),
+  );
+  const targetDir = path.join(tmpRoot, 'target');
+  const brief = '# Expenses\nPlan an expense tracker.\n';
+  await fs.mkdir(path.join(targetDir, 'input'), { recursive: true });
+  await fs.writeFile(path.join(targetDir, 'input', 'brief.md'), brief);
+  let plannerCalls = 0;
+  let chatCalls = 0;
+  try {
+    const result = await runPipeline({
+      targetDir,
+      planOnly: true,
+      config: {
+        stack: 'react-vite',
+        viewport: { width: 390, height: 844 },
+        maxRepairRounds: 1,
+        maxPolishRounds: 1,
+        model: 'stub-plan-only',
+        baseUrl: 'http://stub.local/v1',
+        temperature: 0.2,
+        brief,
+        references: [],
+        runsRoot: path.join(tmpRoot, 'runs'),
+      },
+      provider: {
+        async chatJson() {
+          plannerCalls += 1;
+          return { json: SPEC, usage: {}, model: 'stub-plan-only' };
+        },
+        async chat() {
+          chatCalls += 1;
+          throw new Error('build/polish must not run');
+        },
+      },
+    });
+    assert.equal(result.status, 'planned');
+    assert.equal(plannerCalls, 1);
+    assert.equal(chatCalls, 0);
+    const events = await fs.readFile(
+      path.join(result.runDir, 'logs', 'events.jsonl'),
+      'utf8',
+    );
+    assert.doesNotMatch(events, /polish:|build:start/);
+  } finally {
+    await fs.rm(tmpRoot, { recursive: true, force: true });
+  }
+});
 
 test('full pipeline succeeds end-to-end with a stub model (no API)', { skip: !ENABLED, timeout: 300_000 }, async () => {
   // Canonicalize Windows 8.3 temp aliases (for example ASCHEN~1). Vite/Rollup
@@ -637,12 +899,17 @@ test('UI quality failure sends screenshots to the fixer and passes after one rep
     );
     const events = eventsText.trim().split('\n').map((line) => JSON.parse(line));
     const qualityEvents = events.filter((event) => event.type === 'quality:audit');
-    assert.equal(qualityEvents.length, 2);
+    assert.equal(qualityEvents.length, 3);
     assert.match(qualityEvents[0].summary, /2 checks failing/);
     assert.match(qualityEvents[1].summary, /checks pass/);
+    assert.match(qualityEvents[2].summary, /checks pass/);
     assert.ok(
       events.findIndex((event) => event === qualityEvents[0])
         < events.findIndex((event) => event === qualityEvents[1]),
+    );
+    assert.ok(
+      events.findIndex((event) => event === qualityEvents[1])
+        < events.findIndex((event) => event === qualityEvents[2]),
     );
 
     const report = await fs.readFile(path.join(result.runDir, 'DELIVERY_REPORT.md'), 'utf8');

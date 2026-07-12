@@ -8,6 +8,7 @@ import { plan } from './planner.js';
 import { build } from './builder.js';
 import { review } from './reviewer.js';
 import { fix, describeFailure, sanitizeUiFailure } from './fixer.js';
+import { polish, promotePolishCandidate } from './polisher.js';
 import {
   npmInstall,
   npmBuild,
@@ -41,6 +42,13 @@ export async function runPipeline({
   const qualityHistory = [];
   let fatal = null;
   let errorCode;
+  let draftVerdict = null;
+  let polishResult = {
+    status: 'not-run',
+    changedFiles: [],
+    draftReview: null,
+    candidateReview: null,
+  };
   const qualityDir = ctx.qualityDir ?? path.join(ctx.runDir, 'quality');
   await fs.mkdir(qualityDir, { recursive: true });
 
@@ -94,7 +102,8 @@ export async function runPipeline({
       );
 
       if (verdict.reviewResult?.pass) {
-        status = 'success';
+        draftVerdict = verdict;
+        polishResult.draftReview = verdict.reviewResult;
         break;
       }
       if (rounds === config.maxRepairRounds) {
@@ -127,6 +136,63 @@ export async function runPipeline({
         visualFailures,
         uiFailures,
       });
+    }
+
+    if (draftVerdict?.reviewResult?.pass) {
+      let polishStage = 'generation';
+      try {
+        const changedFiles = await polish(ctx, provider, {
+          spec,
+          uiQuality: draftVerdict.uiQuality,
+          visualResults: draftVerdict.visualResults,
+          screenshots: draftScreenshotNames(draftVerdict),
+        });
+        polishResult.changedFiles = changedFiles;
+        polishStage = 'verification';
+        const candidateCtx = await createCandidateVerificationContext(ctx);
+        const candidateVerdict = await verifyOnce(
+          candidateCtx,
+          config,
+          spec,
+          'polish',
+          uiCollector,
+          candidateCtx.qualityDir,
+        );
+        polishResult.candidateReview = candidateVerdict.reviewResult;
+        await persistVerificationEvidence(
+          candidateCtx,
+          candidateVerdict,
+          'polish',
+          [],
+          [],
+        );
+        polishResult = {
+          ...polishResult,
+          status: candidateVerdict.reviewResult?.pass ? 'verified' : 'failed',
+          draftEvidence: safeVerdictLineage(draftVerdict),
+          candidateEvidence: safeVerdictLineage(candidateVerdict),
+        };
+        if (!candidateVerdict.reviewResult?.pass) {
+          throw new Error('polish candidate verification failed');
+        }
+        polishStage = 'promotion';
+        await promotePolishCandidate(ctx);
+        polishResult.status = 'promoted';
+        finalReview = candidateVerdict.reviewResult;
+        shots = candidateVerdict.shots;
+        scenarioResults = candidateVerdict.scenarioResults ?? [];
+        visualResults = candidateVerdict.visualResults ?? [];
+        uiQuality = candidateVerdict.uiQuality ?? uiQuality;
+        status = 'success';
+      } catch (error) {
+        status = 'failed';
+        polishResult.status = 'failed';
+        fatal = polishFailure(error);
+        await ctx.logEvent('polish:failed', {
+          code: 'POLISH_FAILED',
+          summary: polishFailureSummary(polishStage, polishResult.changedFiles.length),
+        });
+      }
     }
   } catch (err) {
     fatal = err;
@@ -164,6 +230,7 @@ export async function runPipeline({
       visualHistory,
       uiQuality,
       qualityHistory,
+      polish: polishResult,
       errorCode,
       error: fatal,
     });
@@ -173,6 +240,7 @@ export async function runPipeline({
       status,
       uiQuality,
       qualityHistory,
+      polish: polishResult,
       ...(errorCode ? { errorCode } : {}),
     };
   }
@@ -276,6 +344,105 @@ async function verifyOnce(ctx, config, spec, round, uiCollector, qualityDir) {
   } finally {
     preview.stop();
   }
+}
+
+function draftScreenshotNames(verdict) {
+  const qualityScreenshots = (verdict.uiQuality?.results ?? [])
+    .map((result) => safeFileName(result.screenshot))
+    .filter(Boolean);
+  const visualScreenshots = (verdict.visualResults ?? [])
+    .map((result) => safeFileName(result.actualImage))
+    .filter(Boolean);
+  const pageScreenshots = (verdict.shots ?? [])
+    .map((shot) => safeFileName(shot.file))
+    .filter(Boolean);
+  const preferred = qualityScreenshots.length
+    ? [...qualityScreenshots, ...visualScreenshots]
+    : [...pageScreenshots, ...visualScreenshots];
+  return [...new Set(preferred)].slice(0, 8);
+}
+
+async function createCandidateVerificationContext(ctx) {
+  const candidateCtx = {
+    ...ctx,
+    appDir: ctx.polishCandidateDir,
+    logsDir: path.join(ctx.polishDir, 'logs'),
+    screenshotsDir: path.join(ctx.polishDir, 'screenshots'),
+    qualityDir: path.join(ctx.polishDir, 'quality'),
+    visualDir: path.join(ctx.polishDir, 'visual'),
+    referencesDir: ctx.referencesDir,
+  };
+  await Promise.all([
+    candidateCtx.logsDir,
+    candidateCtx.screenshotsDir,
+    candidateCtx.qualityDir,
+    candidateCtx.visualDir,
+  ].map((dir) => fs.mkdir(dir, { recursive: true })));
+  return candidateCtx;
+}
+
+async function persistVerificationEvidence(
+  executionCtx,
+  verdict,
+  round,
+  qualityHistory,
+  visualHistory,
+) {
+  if (verdict.uiQuality) {
+    qualityHistory.push({ round, ...verdict.uiQuality });
+    await fs.writeFile(
+      path.join(executionCtx.qualityDir, `round-${round}.json`),
+      JSON.stringify(verdict.uiQuality, null, 2),
+      'utf8',
+    );
+  }
+  await fs.writeFile(
+    path.join(executionCtx.qualityDir, 'history.json'),
+    JSON.stringify(qualityHistory, null, 2),
+    'utf8',
+  );
+  visualHistory.push({ round, results: verdict.visualResults ?? [] });
+  await fs.writeFile(
+    path.join(executionCtx.visualDir, `round-${round}.json`),
+    JSON.stringify(verdict.visualResults ?? [], null, 2),
+    'utf8',
+  );
+  await fs.writeFile(
+    path.join(executionCtx.visualDir, 'comparisons.json'),
+    JSON.stringify(visualHistory, null, 2),
+    'utf8',
+  );
+}
+
+function safeVerdictLineage(verdict) {
+  return {
+    review: verdict.reviewResult,
+    uiQuality: verdict.uiQuality,
+    visualResults: verdict.visualResults ?? [],
+    screenshots: (verdict.shots ?? []).map((shot) => safeFileName(shot.file)).filter(Boolean),
+    scenarios: (verdict.scenarioResults ?? []).map((scenario) => ({
+      name: String(scenario.name ?? '').slice(0, 160),
+      pass: scenario.pass === true,
+    })),
+  };
+}
+
+function safeFileName(value) {
+  return path.posix.basename(path.win32.basename(String(value ?? '')));
+}
+
+function polishFailure(error) {
+  const failure = new Error('POLISH_FAILED: bounded polish did not reach delivery');
+  failure.code = 'POLISH_FAILED';
+  failure.cause = error;
+  return failure;
+}
+
+function polishFailureSummary(stage, changedFiles) {
+  if (stage === 'verification') {
+    return `candidate verification failed after ${changedFiles} changed files`;
+  }
+  return `polish ${stage} failed after ${changedFiles} changed files`;
 }
 
 function failEarly(reason) {
