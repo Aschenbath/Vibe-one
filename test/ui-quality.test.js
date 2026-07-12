@@ -245,10 +245,14 @@ test('collector captures ordered desktop-mobile evidence and closes browser reso
       'main{padding:24px;min-height:500px}h1{margin:0 0 20px}',
       'button{width:', String(buttonSize), 'px;height:', String(buttonSize),
       'px;border:1px solid #173f9e;border-radius:6px;background:#2457d6;color:#fff}',
+      '.ancestor-hidden{opacity:0}.audit-trap{width:20px;height:20px}',
       '</style></head><body>',
       '<nav aria-label="主导航">质量工作台</nav>',
       '<main><h1>', small ? '风险队列' : '健康概览', '</h1>',
       '<button data-ui-native-styled aria-label="筛选">筛选</button>',
+      '<div class=ancestor-hidden><input class=audit-trap aria-label=祖先隐藏输入></div>',
+      '<fieldset disabled><input class=audit-trap aria-label=禁用输入>',
+      '<button class=audit-trap aria-label=禁用按钮>禁用按钮</button></fieldset>',
       '<p>真实运营数据已同步 😊</p>',
       '<section data-ui-state="loading">加载状态证据</section>',
       '</main></body></html>',
@@ -291,6 +295,24 @@ test('collector captures ordered desktop-mobile evidence and closes browser reso
       assert.ok(result.failures.some((failure) => failure.code === 'HIT_TARGET_TOO_SMALL'));
     }
     assert.ok(evidence.results.slice(2).every((result) => result.pass));
+    const ignoredLabels = /祖先隐藏输入|禁用输入|禁用按钮/u;
+    for (const [index, result] of evidence.results.entries()) {
+      assert.equal(result.metrics.interactiveCount, 1);
+      assert.equal(
+        result.failures.filter((failure) => failure.code === 'HIT_TARGET_TOO_SMALL').length,
+        index < 2 ? 1 : 0,
+      );
+      assert.equal(
+        result.failures.filter(
+          (failure) => failure.code === 'UNSTYLED_NATIVE_CONTROL',
+        ).length,
+        0,
+      );
+      assert.equal(
+        result.failures.some((failure) => ignoredLabels.test(failure.detail ?? '')),
+        false,
+      );
+    }
     assert.equal(evidence.summary.pass, false);
     assert.equal(
       evidence.summary.failures.filter(

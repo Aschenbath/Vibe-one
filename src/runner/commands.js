@@ -376,20 +376,40 @@ function collectDomSnapshot({ pageSpec, viewportName, requiredStates }) {
 
   function isVisible(element) {
     if (!(element instanceof Element)) return false;
-    if (element.closest('[hidden],[aria-hidden="true"]')) return false;
-    const style = getComputedStyle(element);
+    for (let current = element; current; current = current.parentElement) {
+      if (current.hidden || current.getAttribute('aria-hidden') === 'true') {
+        return false;
+      }
+      const inheritedStyle = getComputedStyle(current);
+      if (
+        inheritedStyle.display === 'none'
+        || inheritedStyle.visibility === 'hidden'
+        || inheritedStyle.visibility === 'collapse'
+        || Number(inheritedStyle.opacity) <= 0
+      ) {
+        return false;
+      }
+      if (current === document.documentElement) break;
+    }
     const rect = element.getBoundingClientRect();
     return (
-      style.display !== 'none'
-      && style.visibility !== 'hidden'
-      && Number(style.opacity) > 0
-      && rect.width > 0
+      rect.width > 0
       && rect.height > 0
     );
   }
 
   function isEnabled(element) {
-    return !element.disabled && element.getAttribute('aria-disabled') !== 'true';
+    let nativelyDisabled = false;
+    try {
+      nativelyDisabled = element.matches(':disabled');
+    } catch {
+      // Some non-HTML DOM implementations may not support :disabled.
+    }
+    return (
+      !nativelyDisabled
+      && !element.disabled
+      && element.getAttribute('aria-disabled') !== 'true'
+    );
   }
 
   function label(element) {
