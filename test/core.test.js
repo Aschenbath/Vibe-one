@@ -1179,14 +1179,14 @@ test('polish candidate copies trusted source without disposable build caches', a
   try {
     await fs.mkdir(path.join(ctx.appDir, 'src'), { recursive: true });
     await fs.mkdir(path.join(ctx.appDir, 'node_modules', 'pkg'), { recursive: true });
-    await fs.mkdir(path.join(ctx.appDir, 'dist'), { recursive: true });
-    await fs.mkdir(path.join(ctx.appDir, '.vite'), { recursive: true });
+    await fs.mkdir(path.join(ctx.appDir, 'DIST'), { recursive: true });
+    await fs.mkdir(path.join(ctx.appDir, '.VITE'), { recursive: true });
     await fs.writeFile(path.join(ctx.appDir, 'src', 'App.jsx'), 'draft');
     await fs.writeFile(path.join(ctx.appDir, 'package.json'), '{"name":"app"}');
     await fs.writeFile(path.join(ctx.appDir, 'vite.config.js'), 'export default {}');
     await fs.writeFile(path.join(ctx.appDir, 'node_modules', 'pkg', 'index.js'), 'cache');
-    await fs.writeFile(path.join(ctx.appDir, 'dist', 'index.js'), 'build');
-    await fs.writeFile(path.join(ctx.appDir, '.vite', 'meta.json'), 'cache');
+    await fs.writeFile(path.join(ctx.appDir, 'DIST', 'index.js'), 'build');
+    await fs.writeFile(path.join(ctx.appDir, '.VITE', 'meta.json'), 'cache');
 
     await createPolishCandidate(ctx);
     await fs.writeFile(path.join(ctx.polishCandidateDir, 'src', 'App.jsx'), 'candidate');
@@ -1195,8 +1195,46 @@ test('polish candidate copies trusted source without disposable build caches', a
     assert.equal(await fs.readFile(path.join(ctx.polishCandidateDir, 'src', 'App.jsx'), 'utf8'), 'candidate');
     assert.equal(await fs.readFile(path.join(ctx.polishCandidateDir, 'package.json'), 'utf8'), '{"name":"app"}');
     assert.equal(await fs.readFile(path.join(ctx.polishCandidateDir, 'vite.config.js'), 'utf8'), 'export default {}');
-    for (const disposable of ['node_modules', 'dist', '.vite']) {
+    for (const disposable of ['node_modules', 'DIST', '.VITE']) {
       await assert.rejects(fs.stat(path.join(ctx.polishCandidateDir, disposable)), { code: 'ENOENT' });
+    }
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('polish candidate rejects source links before deleting or copying', async () => {
+  const { createPolishCandidate } = await loadPolisherModule();
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-polish-link-'));
+  const ctx = await createRunContext(path.join(root, 'target'), {
+    runsRoot: path.join(root, 'runs'),
+  });
+  try {
+    for (const detectedBy of ['dirent', 'lstat']) {
+      let removed = false;
+      let copied = false;
+      const entry = {
+        name: 'external-link',
+        isDirectory: () => false,
+        isSymbolicLink: () => detectedBy === 'dirent',
+      };
+      const operations = {
+        readdir: async () => [entry],
+        lstat: async () => ({
+          isDirectory: () => false,
+          isSymbolicLink: () => detectedBy === 'lstat',
+        }),
+        rm: async () => { removed = true; },
+        cp: async () => { copied = true; },
+      };
+
+      await assert.rejects(
+        createPolishCandidate(ctx, operations),
+        (error) => error.code === 'POLISH_SOURCE_LINK_UNSAFE',
+        detectedBy,
+      );
+      assert.equal(removed, false, detectedBy);
+      assert.equal(copied, false, detectedBy);
     }
   } finally {
     await fs.rm(root, { recursive: true, force: true });
@@ -1247,6 +1285,103 @@ test('polish promotion with a missing candidate leaves the app untouched', async
     );
     assert.equal(await fs.readFile(path.join(ctx.appDir, 'src', 'App.jsx'), 'utf8'), 'draft');
     await assert.rejects(fs.stat(ctx.draftAppDir), { code: 'ENOENT' });
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('polish promotion restores the app when candidate promotion fails', async () => {
+  const {
+    createPolishCandidate,
+    promotePolishCandidate,
+  } = await loadPolisherModule();
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-polish-rollback-'));
+  const ctx = await createRunContext(path.join(root, 'target'), {
+    runsRoot: path.join(root, 'runs'),
+  });
+  try {
+    await fs.mkdir(path.join(ctx.appDir, 'src'), { recursive: true });
+    await fs.writeFile(path.join(ctx.appDir, 'src', 'App.jsx'), 'draft');
+    await createPolishCandidate(ctx);
+    await fs.writeFile(path.join(ctx.polishCandidateDir, 'src', 'App.jsx'), 'candidate');
+    const promotionError = new Error('candidate promotion failed');
+    promotionError.code = 'EACCES';
+    let renameCalls = 0;
+
+    await assert.rejects(
+      promotePolishCandidate(ctx, {
+        stat: fs.stat,
+        rm: fs.rm,
+        async rename(from, to) {
+          renameCalls += 1;
+          if (renameCalls === 2) throw promotionError;
+          return fs.rename(from, to);
+        },
+      }),
+      (error) => error === promotionError,
+    );
+
+    assert.equal(await fs.readFile(path.join(ctx.appDir, 'src', 'App.jsx'), 'utf8'), 'draft');
+    assert.equal(
+      await fs.readFile(path.join(ctx.polishCandidateDir, 'src', 'App.jsx'), 'utf8'),
+      'candidate',
+    );
+    await assert.rejects(fs.stat(ctx.draftAppDir), { code: 'ENOENT' });
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('polish promotion reports a sanitized recovery error when rollback also fails', async () => {
+  const {
+    createPolishCandidate,
+    promotePolishCandidate,
+  } = await loadPolisherModule();
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-polish-rollback-fail-'));
+  const ctx = await createRunContext(path.join(root, 'target'), {
+    runsRoot: path.join(root, 'runs'),
+  });
+  try {
+    await fs.mkdir(path.join(ctx.appDir, 'src'), { recursive: true });
+    await fs.writeFile(path.join(ctx.appDir, 'src', 'App.jsx'), 'draft');
+    await createPolishCandidate(ctx);
+    await fs.writeFile(path.join(ctx.polishCandidateDir, 'src', 'App.jsx'), 'candidate');
+    const promotionDetail = 'candidate failed at ' + ctx.appDir;
+    const rollbackDetail = 'rollback failed at ' + ctx.draftAppDir;
+    let renameCalls = 0;
+
+    await assert.rejects(
+      promotePolishCandidate(ctx, {
+        stat: fs.stat,
+        rm: fs.rm,
+        async rename(from, to) {
+          renameCalls += 1;
+          if (renameCalls === 1) return fs.rename(from, to);
+          if (renameCalls === 2) throw new Error(promotionDetail);
+          throw new Error(rollbackDetail);
+        },
+      }),
+      (error) => {
+        assert.equal(error.code, 'POLISH_ROLLBACK_FAILED');
+        assert.match(error.message, /draft retained.*recovery required/i);
+        assert.equal(error.message.includes(root), false);
+        assert.equal(error.message.includes(promotionDetail), false);
+        assert.equal(error.message.includes(rollbackDetail), false);
+        assert.equal(error.draftRetained, true);
+        assert.equal(error.recoveryRequired, true);
+        return true;
+      },
+    );
+
+    assert.equal(
+      await fs.readFile(path.join(ctx.draftAppDir, 'src', 'App.jsx'), 'utf8'),
+      'draft',
+    );
+    assert.equal(
+      await fs.readFile(path.join(ctx.polishCandidateDir, 'src', 'App.jsx'), 'utf8'),
+      'candidate',
+    );
+    await assert.rejects(fs.stat(ctx.appDir), { code: 'ENOENT' });
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }

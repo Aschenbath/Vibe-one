@@ -50,26 +50,30 @@ export function validatePolishFiles(files, candidateRoot = process.cwd()) {
   return files;
 }
 
-export async function createPolishCandidate(ctx) {
+export async function createPolishCandidate(ctx, operations = fs) {
   assertOwnedPolishPaths(ctx);
-  await fs.rm(ctx.polishCandidateDir, { recursive: true, force: true });
-  await fs.cp(ctx.appDir, ctx.polishCandidateDir, {
+  await assertPolishSourceSafe(ctx.appDir, operations);
+  await operations.rm(ctx.polishCandidateDir, { recursive: true, force: true });
+  await assertPolishSourceSafe(ctx.appDir, operations);
+  await operations.cp(ctx.appDir, ctx.polishCandidateDir, {
     recursive: true,
     force: true,
     filter(source) {
       const relative = path.relative(ctx.appDir, source);
       if (!relative) return true;
-      return !relative.split(path.sep).some((segment) => DISPOSABLE_SEGMENTS.has(segment));
+      return !relative.split(path.sep).some(
+        (segment) => DISPOSABLE_SEGMENTS.has(segment.toLowerCase()),
+      );
     },
   });
   return ctx.polishCandidateDir;
 }
 
-export async function promotePolishCandidate(ctx) {
+export async function promotePolishCandidate(ctx, operations = fs) {
   assertOwnedPolishPaths(ctx);
   assertOwnedChild(ctx.polishDir, ctx.draftAppDir, 'draftAppDir');
 
-  const candidate = await fs.stat(ctx.polishCandidateDir).catch((error) => {
+  const candidate = await operations.stat(ctx.polishCandidateDir).catch((error) => {
     if (error.code === 'ENOENT') return null;
     throw error;
   });
@@ -79,15 +83,36 @@ export async function promotePolishCandidate(ctx) {
     throw error;
   }
 
-  await fs.rm(ctx.draftAppDir, { recursive: true, force: true });
-  await fs.rename(ctx.appDir, ctx.draftAppDir);
+  await operations.rm(ctx.draftAppDir, { recursive: true, force: true });
+  await operations.rename(ctx.appDir, ctx.draftAppDir);
   try {
-    await fs.rename(ctx.polishCandidateDir, ctx.appDir);
+    await operations.rename(ctx.polishCandidateDir, ctx.appDir);
   } catch (error) {
-    await fs.rename(ctx.draftAppDir, ctx.appDir).catch(() => {});
+    try {
+      await operations.rename(ctx.draftAppDir, ctx.appDir);
+    } catch {
+      const rollbackError = new Error(
+        'POLISH_ROLLBACK_FAILED: draft retained; manual recovery required',
+      );
+      rollbackError.code = 'POLISH_ROLLBACK_FAILED';
+      rollbackError.draftRetained = true;
+      rollbackError.recoveryRequired = true;
+      throw rollbackError;
+    }
     throw error;
   }
   return ctx.appDir;
+}
+
+async function assertPolishSourceSafe(sourceRoot, operations = fs) {
+  const entries = await operations.readdir(sourceRoot, { withFileTypes: true });
+  for (const entry of entries) {
+    if (entry.isSymbolicLink()) throw polishSourceLinkUnsafe();
+    const source = path.join(sourceRoot, entry.name);
+    const stats = await operations.lstat(source);
+    if (stats.isSymbolicLink()) throw polishSourceLinkUnsafe();
+    if (stats.isDirectory()) await assertPolishSourceSafe(source, operations);
+  }
 }
 
 function assertOwnedPolishPaths(ctx) {
@@ -106,5 +131,11 @@ function assertOwnedChild(parent, child, label) {
 function polishOutputLimit(detail) {
   const error = new Error('POLISH_OUTPUT_LIMIT: ' + detail);
   error.code = 'POLISH_OUTPUT_LIMIT';
+  return error;
+}
+
+function polishSourceLinkUnsafe() {
+  const error = new Error('POLISH_SOURCE_LINK_UNSAFE: linked source entries are not allowed');
+  error.code = 'POLISH_SOURCE_LINK_UNSAFE';
   return error;
 }
