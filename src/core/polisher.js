@@ -6,7 +6,6 @@ import {
   gatherSource,
   sanitizeUiFailure,
   UI_EVIDENCE_LIMITS,
-  validateUiEvidenceFiles,
 } from './fixer.js';
 
 export const POLISH_LIMITS = Object.freeze({
@@ -39,12 +38,12 @@ OUTPUT FORMAT - emit complete corrected files only, with no prose or markdown fe
 
 Touch as few files as possible. Hard limit: at most 4 files and 18,000 characters total.`;
 
-export async function polish(ctx, provider, evidence = {}) {
+export async function polish(ctx, provider, evidence = {}, evidenceOperations = fs) {
   await ctx.logEvent('polish:start', {
     summary: 'applying one bounded UI polish pass',
   });
   const source = await gatherSource(ctx.appDir);
-  const user = await buildPolishEvidence(ctx, evidence, source);
+  const user = await buildPolishEvidence(ctx, evidence, source, evidenceOperations);
   const { content, usage } = await provider.chat({ system: POLISHER_SYSTEM, user });
   ctx.addUsage(usage);
 
@@ -53,7 +52,12 @@ export async function polish(ctx, provider, evidence = {}) {
   validatePolishFiles(files, ctx.polishCandidateDir);
 
   await createPolishCandidate(ctx);
-  await applyPatch({ ...ctx, appDir: ctx.polishCandidateDir }, files);
+  try {
+    await applyPatch({ ...ctx, appDir: ctx.polishCandidateDir }, files);
+  } catch (error) {
+    await fs.rm(ctx.polishCandidateDir, { recursive: true, force: true });
+    throw error;
+  }
   const changed = files.map((file) => file.path);
   await ctx.logEvent('polish:applied', {
     summary: `${changed.length} files applied to isolated candidate`,
@@ -165,8 +169,12 @@ async function assertPolishSourceSafe(sourceRoot, operations = fs) {
   }
 }
 
-async function buildPolishEvidence(ctx, evidence, source) {
-  const screenshots = await resolveEvidenceScreenshots(ctx, evidence.screenshots ?? []);
+async function buildPolishEvidence(ctx, evidence, source, operations) {
+  const screenshots = await resolveEvidenceScreenshots(
+    ctx,
+    evidence.screenshots ?? [],
+    operations,
+  );
   const spec = sanitizeApprovedSpec(evidence.spec);
   const uiQuality = sanitizeUiQuality(evidence.uiQuality);
   const visualResults = sanitizeVisualResults(evidence.visualResults);
@@ -195,21 +203,25 @@ async function buildPolishEvidence(ctx, evidence, source) {
   ].join('\n');
   const parts = [{ type: 'text', text }];
   for (const screenshot of screenshots) {
-    const bytes = await fs.readFile(screenshot.file);
+    const bytes = await readVerifiedScreenshot(screenshot, operations);
     if (bytes.length > UI_EVIDENCE_LIMITS.maxFileBytes) {
       throw polishEvidenceInvalid('screenshot exceeds the per-file limit');
+    }
+    const detectedType = detectImageType(bytes);
+    if (!detectedType || detectedType !== screenshot.expectedType) {
+      throw polishEvidenceInvalid('screenshot content does not match its extension');
     }
     parts.push({
       type: 'image_url',
       image_url: {
-        url: `data:${screenshot.type};base64,${bytes.toString('base64')}`,
+        url: `data:${detectedType};base64,${bytes.toString('base64')}`,
       },
     });
   }
   return parts;
 }
 
-async function resolveEvidenceScreenshots(ctx, screenshots) {
+async function resolveEvidenceScreenshots(ctx, screenshots, operations) {
   if (!Array.isArray(screenshots)) throw polishEvidenceInvalid('screenshots must be an array');
   if (screenshots.length > UI_EVIDENCE_LIMITS.maxFiles) {
     throw polishEvidenceInvalid('too many screenshots');
@@ -217,34 +229,106 @@ async function resolveEvidenceScreenshots(ctx, screenshots) {
   assertOwnedChild(ctx.runDir, ctx.qualityDir, 'qualityDir');
   assertOwnedChild(ctx.runDir, ctx.screenshotsDir, 'screenshotsDir');
 
+  const runReal = await evidenceRealpath(ctx.runDir, operations);
+  const roots = [];
+  for (const dir of [ctx.qualityDir, ctx.screenshotsDir]) {
+    const real = await evidenceRealpath(dir, operations);
+    if (!isOwnedPath(runReal, real)) throw polishEvidenceUnsafe();
+    roots.push({ dir, real });
+  }
+
   const resolved = [];
   const seenFiles = new Set();
+  let totalBytes = 0;
   for (const screenshot of screenshots) {
     const raw = typeof screenshot === 'string' ? screenshot : screenshot?.filename;
     const filename = safeBasename(raw);
-    const type = SCREENSHOT_TYPES.get(path.extname(filename).toLowerCase());
-    if (!raw || raw !== filename || !type) {
+    const expectedType = SCREENSHOT_TYPES.get(path.extname(filename).toLowerCase());
+    if (!raw || raw !== filename || !expectedType) {
       throw polishEvidenceInvalid('screenshot identifier must be a safe image basename');
     }
-    const candidates = [
-      path.join(ctx.qualityDir, filename),
-      path.join(ctx.screenshotsDir, filename),
-    ];
-    let file;
-    for (const candidate of candidates) {
-      const stat = await fs.stat(candidate).catch(() => null);
-      if (stat?.isFile()) {
-        file = candidate;
+    let inspected;
+    for (const root of roots) {
+      inspected = await inspectEvidenceCandidate(
+        root,
+        path.join(root.dir, filename),
+        operations,
+      );
+      if (inspected) {
         break;
       }
     }
-    if (!file) throw polishEvidenceInvalid('screenshot is unavailable');
-    if (seenFiles.has(file)) continue;
-    seenFiles.add(file);
-    resolved.push({ filename, file, type });
+    if (!inspected) throw polishEvidenceInvalid('screenshot is unavailable');
+    if (seenFiles.has(inspected.file)) continue;
+    seenFiles.add(inspected.file);
+    totalBytes += inspected.size;
+    if (
+      inspected.size > UI_EVIDENCE_LIMITS.maxFileBytes
+      || totalBytes > UI_EVIDENCE_LIMITS.maxTotalBytes
+    ) {
+      throw polishEvidenceInvalid('screenshot evidence exceeds the byte limit');
+    }
+    resolved.push({ filename, expectedType, ...inspected });
   }
-  await validateUiEvidenceFiles(resolved.map((item) => ({ actualFile: item.file })));
   return resolved;
+}
+
+async function inspectEvidenceCandidate(root, candidate, operations) {
+  let before;
+  try {
+    before = await operations.lstat(candidate);
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    throw polishEvidenceInvalid('screenshot is unavailable');
+  }
+  if (before.isSymbolicLink()) throw polishEvidenceUnsafe();
+
+  const file = await evidenceRealpath(candidate, operations);
+  if (!isOwnedPath(root.real, file)) throw polishEvidenceUnsafe();
+  const after = await operations.lstat(candidate).catch(() => null);
+  if (!after || after.isSymbolicLink()) throw polishEvidenceUnsafe();
+  const stat = await operations.stat(file).catch(() => null);
+  if (!stat?.isFile()) throw polishEvidenceInvalid('screenshot is unavailable');
+  return { candidate, file, rootReal: root.real, size: stat.size };
+}
+
+async function readVerifiedScreenshot(screenshot, operations) {
+  const inspected = await inspectEvidenceCandidate(
+    { real: screenshot.rootReal },
+    screenshot.candidate,
+    operations,
+  );
+  if (!inspected || inspected.file !== screenshot.file) throw polishEvidenceUnsafe();
+  return operations.readFile(inspected.file);
+}
+
+async function evidenceRealpath(value, operations) {
+  try {
+    return await operations.realpath(value);
+  } catch {
+    throw polishEvidenceInvalid('screenshot is unavailable');
+  }
+}
+
+function isOwnedPath(root, child) {
+  const relative = path.relative(path.resolve(root), path.resolve(child));
+  return Boolean(relative) && !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative);
+}
+
+function detectImageType(bytes) {
+  if (
+    bytes.length >= 8
+    && bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+  ) return 'image/png';
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return 'image/jpeg';
+  }
+  if (
+    bytes.length >= 12
+    && bytes.subarray(0, 4).toString('ascii') === 'RIFF'
+    && bytes.subarray(8, 12).toString('ascii') === 'WEBP'
+  ) return 'image/webp';
+  return null;
 }
 
 function sanitizeApprovedSpec(spec = {}) {
@@ -312,6 +396,8 @@ function safeBasename(value) {
 
 function safeEvidenceText(value, maxLength) {
   return redactSensitiveEvidence(value)
+    .replace(/https?:\/\/[^\s'"]+/giu, '[redacted]')
+    .replace(/(^|[\s'"])\/(?:[^/\s'"]+\/)+[^\s'"]+/gu, '$1[redacted]')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, maxLength);
@@ -328,9 +414,14 @@ function redactSensitiveEvidence(value) {
       '[redacted stack]',
     )
     .replace(/data:[^;\s]+;base64,[A-Za-z0-9+/=]+/giu, '[redacted]')
-    .replace(/https?:\/\/[^\s'"]+/giu, '[redacted]')
-    .replace(/[A-Za-z]:[\\/][^\s'"]+/gu, '[redacted]')
-    .replace(/(^|[\s'"])\/(?:[^/\s'"]+\/)+[^\s'"]+/gu, '$1[redacted]');
+    .replace(/(^|[\s'"])[A-Za-z]:[\\/][^\s'"]+/gu, '$1[redacted]')
+    .replace(/\\\\[^\s'"]+/gu, '[redacted]')
+    .replace(
+      /(^|[\s'"])(\/(?:home|Users)\/[^/\s'"]+\/[^\s'"]+|\/(?:tmp|var\/tmp)\/[^\s'"]+)/gu,
+      '$1[redacted]',
+    )
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/giu, 'Bearer [redacted]')
+    .replace(/\bsk-[A-Za-z0-9_-]{8,}/gu, '[redacted credential]');
 }
 
 function assertOwnedPolishPaths(ctx) {
@@ -367,5 +458,11 @@ function polishOutputInvalid() {
 function polishEvidenceInvalid(detail) {
   const error = new Error('POLISH_EVIDENCE_INVALID: ' + detail);
   error.code = 'POLISH_EVIDENCE_INVALID';
+  return error;
+}
+
+function polishEvidenceUnsafe() {
+  const error = new Error('POLISH_EVIDENCE_UNSAFE: linked or escaped screenshot evidence');
+  error.code = 'POLISH_EVIDENCE_UNSAFE';
   return error;
 }
