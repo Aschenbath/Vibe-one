@@ -338,6 +338,10 @@ test('planner validates product design and writes bilingual artifacts', async ()
     assert.match(PLANNER_SYSTEM, /colors.*typography.*spacing.*radii/s);
     assert.match(PLANNER_SYSTEM, /componentLanguage.*requiredStates.*responsiveRules/s);
     assert.match(PLANNER_SYSTEM, /product-specific.*not generic.*modern.*clean/is);
+    assert.match(PLANNER_SYSTEM, /at least 6 color tokens.*4 typography tokens.*5 spacing values.*3 radii/is);
+    assert.match(PLANNER_SYSTEM, /at least 2 distinct states.*loading.*empty.*error.*success/is);
+    assert.match(PLANNER_SYSTEM, /trigger.*at least 4 characters/is);
+    assert.match(PLANNER_SYSTEM, /density.*compact.*8 characters/is);
     assert.match(specMd, /产品设计 \/ Product Design/);
     assert.match(specMd, /客服运营主管/);
     assert.match(specMd, /#2457D6/);

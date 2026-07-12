@@ -33,6 +33,9 @@ Given a product brief, output STRICT JSON with keys:
       // Encode each testable interaction from the brief as one scenario (e.g. add item -> new row visible, search -> filtered).
 Keep the app small: mock data only, no backend, no auth. Do not invent features beyond the brief.
 Make productDesign values executable and product-specific, not generic phrases such as modern or clean.
+Provide at least 6 color tokens, 4 typography tokens, 5 spacing values, and 3 radii.
+requiredStates must contain at least 2 distinct states named loading, empty, error, or success; each trigger must be concrete and at least 4 characters.
+Core productDesign text must be concrete; density may be compact, otherwise describe it with at least 8 characters.
 Every mustContain fragment and every scenario.expectText must be something a correct implementation of THIS brief will actually render.`;
 
 export function createPlannerUserContent(config) {
