@@ -1387,6 +1387,218 @@ test('polish promotion reports a sanitized recovery error when rollback also fai
   }
 });
 
+test('single-pass polisher applies bounded UI-only files to an isolated candidate', async () => {
+  const { POLISHER_SYSTEM, polish } = await loadPolisherModule();
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-polish-pass-'));
+  const ctx = await createRunContext(path.join(root, 'target'), {
+    runsRoot: path.join(root, 'runs'),
+  });
+  const calls = [];
+  try {
+    await fs.mkdir(path.join(ctx.appDir, 'src'), { recursive: true });
+    await fs.writeFile(path.join(ctx.appDir, 'src', 'App.jsx'), 'export default function App(){return draft}');
+    await fs.writeFile(path.join(ctx.appDir, 'src', 'styles.css'), '.app{padding:8px}');
+    await fs.writeFile(path.join(ctx.appDir, 'package.json'), '{private:true}');
+    for (const filename of ['quality-overview-desktop.png', 'quality-overview-mobile.png']) {
+      await fs.writeFile(path.join(ctx.qualityDir, filename), ONE_PIXEL_PNG);
+    }
+    const privateEndpoint = 'https://private.invalid/v1';
+    const privatePath = 'D:\\private\\vibe-secret\\quality.png';
+    await fs.writeFile(
+      path.join(ctx.appDir, 'src', 'private.js'),
+      `export const endpoint = '${privateEndpoint}';\nexport const file = '${privatePath}';`,
+    );
+    const evidence = {
+      spec: {
+        ...productPlanFixture(),
+        baseUrl: privateEndpoint,
+        apiKey: 'session-secret',
+        productDesign: { ...PRODUCT_DESIGN, endpoint: privateEndpoint },
+      },
+      uiQuality: {
+        summary: {
+          pass: false,
+          failures: [{
+            code: 'DENSITY_TOO_LOW',
+            page: '质量概览',
+            route: '/',
+            viewport: 'desktop',
+            detail: `cards are sparse ${privateEndpoint} ${privatePath} Error: hidden\n    at secret.js:1:1`,
+            screenshot: privatePath,
+            actualFile: privatePath,
+            stack: 'Error: hidden at secret.js:1:1',
+          }],
+        },
+      },
+      visualResults: [{
+        page: '质量概览',
+        score: 0.51,
+        threshold: 0.62,
+        structure: 0.58,
+        color: 0.42,
+        pass: false,
+        referenceImage: 'D:\\private\\reference-home.png',
+        actualFile: privatePath,
+      }],
+      screenshots: [
+        'quality-overview-desktop.png',
+        { filename: 'quality-overview-mobile.png' },
+        { filename: 'quality-overview-desktop.png' },
+      ],
+    };
+    const provider = {
+      async chat(request) {
+        calls.push(request);
+        return {
+          content: [
+            '=== FILE: src/App.jsx',
+            'export default function App(){return polished}',
+            '=== END ===',
+            '=== FILE: src/styles.css',
+            '.app{padding:16px}',
+            '=== END ===',
+          ].join('\n'),
+          usage: { prompt_tokens: 7, completion_tokens: 9 },
+        };
+      },
+    };
+
+    const changed = await polish(ctx, provider, evidence);
+    const textPart = calls[0].user.find((part) => part.type === 'text').text;
+    const imageParts = calls[0].user.filter((part) => part.type === 'image_url');
+
+    assert.deepEqual(changed, ['src/App.jsx', 'src/styles.css']);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].system, POLISHER_SYSTEM);
+    assert.match(POLISHER_SYSTEM, /hierarchy.*typography.*spacing.*density.*component consistency.*state presentation.*responsive/is);
+    assert.match(POLISHER_SYSTEM, /Do not add features\/routes\/dependencies\/network\/backend/);
+    assert.match(POLISHER_SYSTEM, /at most 4 files.*18,000 characters/is);
+    assert.match(textPart, /Approved spec.*Product Design/is);
+    assert.match(textPart, /数据密集型 B2B SaaS/);
+    assert.match(textPart, /Current model-authored source.*src\/App\.jsx.*draft/is);
+    assert.match(textPart, /quality-overview-desktop\.png.*quality-overview-mobile\.png/is);
+    assert.match(textPart, /DENSITY_TOO_LOW.*质量概览.*desktop.*cards are sparse/is);
+    assert.match(textPart, /score.*0\.51.*threshold.*0\.62/is);
+    assert.match(textPart, /reference-home\.png/);
+    assert.doesNotMatch(textPart, /private\.invalid|vibe-secret|session-secret|data:image|base64|secret\.js|Error: hidden/);
+    assert.equal(imageParts.length, 2);
+    assert.ok(imageParts.every((part) => /^data:image\/png;base64,/.test(part.image_url.url)));
+    assert.equal(await fs.readFile(path.join(ctx.appDir, 'src', 'App.jsx'), 'utf8'), 'export default function App(){return draft}');
+    assert.equal(await fs.readFile(path.join(ctx.polishCandidateDir, 'src', 'App.jsx'), 'utf8'), 'export default function App(){return polished}\n');
+    assert.equal(await fs.readFile(path.join(ctx.polishCandidateDir, 'src', 'styles.css'), 'utf8'), '.app{padding:16px}\n');
+    assert.equal(ctx.usage.promptTokens, 7);
+    assert.equal(ctx.usage.completionTokens, 9);
+    assert.equal(ctx.usage.calls, 1);
+    assert.deepEqual(ctx.events.map((event) => event.type), ['polish:start', 'polish:applied']);
+    assert.deepEqual(ctx.events.map((event) => event.summary), [
+      'applying one bounded UI polish pass',
+      '2 files applied to isolated candidate',
+    ]);
+    assert.doesNotMatch(JSON.stringify(ctx.events), /private\.invalid|vibe-secret|session-secret|base64|src\/App/);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('single-pass polisher rejects invalid model output before candidate writes', async () => {
+  const { polish } = await loadPolisherModule();
+  const cases = [
+    ['no files', 'not a file response', 'POLISH_OUTPUT_INVALID'],
+    ['forbidden file', '=== FILE: package.json\n{}\n=== END ===', 'POLISH_OUTPUT_LIMIT'],
+    ['too many files', Array.from({ length: 5 }, (_, index) => `=== FILE: src/${index}.js\nx\n=== END ===`).join('\n'), 'POLISH_OUTPUT_LIMIT'],
+    ['too many characters', `=== FILE: src/App.jsx\n${'x'.repeat(18_001)}\n=== END ===`, 'POLISH_OUTPUT_LIMIT'],
+  ];
+
+  for (const [name, content, code] of cases) {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-polish-invalid-'));
+    const ctx = await createRunContext(path.join(root, 'target'), {
+      runsRoot: path.join(root, 'runs'),
+    });
+    try {
+      await fs.mkdir(path.join(ctx.appDir, 'src'), { recursive: true });
+      await fs.writeFile(path.join(ctx.appDir, 'src', 'App.jsx'), 'draft');
+      let calls = 0;
+      await assert.rejects(
+        polish(ctx, {
+          async chat() {
+            calls += 1;
+            return { content, usage: {} };
+          },
+        }, { spec: productPlanFixture(), uiQuality: { pass: true }, screenshots: [] }),
+        (error) => error.code === code,
+        name,
+      );
+      assert.equal(calls, 1, name);
+      assert.equal(await fs.readFile(path.join(ctx.appDir, 'src', 'App.jsx'), 'utf8'), 'draft', name);
+      assert.deepEqual(await fs.readdir(ctx.polishCandidateDir), [], name);
+      assert.deepEqual(ctx.events.map((event) => event.type), ['polish:start'], name);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test('single-pass polisher propagates provider failure without success evidence', async () => {
+  const { polish } = await loadPolisherModule();
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-polish-provider-fail-'));
+  const ctx = await createRunContext(path.join(root, 'target'), {
+    runsRoot: path.join(root, 'runs'),
+  });
+  try {
+    await fs.mkdir(path.join(ctx.appDir, 'src'), { recursive: true });
+    await fs.writeFile(path.join(ctx.appDir, 'src', 'App.jsx'), 'draft');
+    const providerError = new Error('provider unavailable');
+
+    await assert.rejects(
+      polish(ctx, { chat: async () => { throw providerError; } }, {
+        spec: productPlanFixture(),
+        uiQuality: { pass: true },
+      }),
+      (error) => error === providerError,
+    );
+
+    assert.deepEqual(ctx.events.map((event) => event.type), ['polish:start']);
+    assert.equal(ctx.usage.calls, 0);
+    assert.equal(await fs.readFile(path.join(ctx.appDir, 'src', 'App.jsx'), 'utf8'), 'draft');
+    assert.deepEqual(await fs.readdir(ctx.polishCandidateDir), []);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('single-pass polisher rejects screenshot paths outside owned evidence directories', async () => {
+  const { polish } = await loadPolisherModule();
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-polish-evidence-jail-'));
+  const ctx = await createRunContext(path.join(root, 'target'), {
+    runsRoot: path.join(root, 'runs'),
+  });
+  let calls = 0;
+  try {
+    await fs.mkdir(path.join(ctx.appDir, 'src'), { recursive: true });
+    await fs.writeFile(path.join(ctx.appDir, 'src', 'App.jsx'), 'draft');
+    for (const filename of ['../outside.png', 'D:\\private\\outside.png', '/private/outside.png']) {
+      await assert.rejects(
+        polish(ctx, { chat: async () => { calls += 1; } }, {
+          spec: productPlanFixture(),
+          uiQuality: { pass: true },
+          screenshots: [filename],
+        }),
+        (error) => error.code === 'POLISH_EVIDENCE_INVALID',
+        filename,
+      );
+    }
+    assert.equal(calls, 0);
+    assert.deepEqual(ctx.events.map((event) => event.type), [
+      'polish:start',
+      'polish:start',
+      'polish:start',
+    ]);
+    assert.deepEqual(await fs.readdir(ctx.polishCandidateDir), []);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test('run context exposes owned quality and polish paths without precreating the draft', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-polish-context-'));
   const ctx = await createRunContext(path.join(root, 'target'), {
