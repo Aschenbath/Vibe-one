@@ -1,17 +1,22 @@
 import { STATUS_COPY, ERROR_COPY, EVENT_COPY } from './copy.js';
 import { createReferenceInputController } from './reference-input.js';
+import { createStudioState, reduceStudio, deriveStudioStage } from './studio-state.js';
 
-const state = {
+let state = {
+  ...createStudioState(),
   status: null,
   jobs: [],
-  selectedJob: null,
-  events: [],
   eventSource: null,
   activeEvidenceTab: 'preview',
   previewJobId: null,
   toastTimer: null,
   visualRequestSequence: 0,
 };
+
+function dispatch(action) {
+  state = reduceStudio(state, action);
+  return state;
+}
 
 const elements = {
   form: document.querySelector('#run-form'),
@@ -151,6 +156,7 @@ async function launchJob() {
         model: elements.model.value.trim(),
       }),
     });
+    dispatch({ type: 'JOB_STARTED', runId: job.id });
     state.jobs = [job, ...state.jobs.filter((item) => item.id !== job.id)];
     await selectJob(job.id);
     await loadStatus();
@@ -171,8 +177,8 @@ function connectEvents(id) {
 
   source.onmessage = (message) => {
     const payload = JSON.parse(message.data);
-    state.selectedJob = { ...state.selectedJob, ...payload.job };
-    if (payload.event) pushEvent(payload.event);
+    dispatch({ type: 'JOB_UPDATED', job: payload.job });
+    if (payload.event) dispatch({ type: 'EVENT_RECEIVED', event: payload.event });
     upsertJob(payload.job);
     render();
     if (payload.job.terminal) {
@@ -190,11 +196,10 @@ function connectEvents(id) {
 
 async function selectJob(id) {
   const job = await api(`/api/jobs/${encodeURIComponent(id)}`);
-  state.selectedJob = job;
-  state.events = [];
-  for (const event of job.events || []) pushEvent(event);
+  dispatch({ type: 'JOB_SELECTED', job });
+  dispatch({ type: 'EVENTS_REPLAYED', events: job.events || [] });
   state.previewJobId = null;
-  setWorkspaceView('flow');
+  setWorkspaceView(state.mode);
   elements.previewFrame.src = 'about:blank';
   elements.previewFrame.hidden = true;
   elements.previewEmpty.hidden = false;
@@ -208,8 +213,8 @@ async function refreshSelectedJob() {
   if (!state.selectedJob) return;
   try {
     const job = await api(`/api/jobs/${encodeURIComponent(state.selectedJob.id)}`);
-    state.selectedJob = job;
-    for (const event of job.events || []) pushEvent(event);
+    dispatch({ type: 'JOB_UPDATED', job });
+    dispatch({ type: 'EVENTS_REPLAYED', events: job.events || [] });
     upsertJob(job);
     render();
     loadActiveEvidence(job);
@@ -276,12 +281,11 @@ function bindEvents() {
 
 function resetComposer() {
   state.eventSource?.close();
-  state.selectedJob = null;
-  state.events = [];
+  dispatch({ type: 'WORKSPACE_FOCUSED' });
   state.previewJobId = null;
   referenceInput.clear();
   clearError();
-  setWorkspaceView('focus');
+  setWorkspaceView(state.mode);
   render();
   elements.brief.focus();
 }
@@ -436,6 +440,7 @@ function renderJob() {
 
 function renderStages(job) {
   const stages = ['planning', 'building', 'verifying', 'visual', 'repairing', 'success'];
+  const activeStage = deriveStudioStage(state);
   const reached = new Set();
   for (const event of state.events) {
     if (event.type.startsWith('plan:')) reached.add('planning');
@@ -450,7 +455,7 @@ function renderStages(job) {
     : null;
   for (const item of elements.stageTrack.querySelectorAll('li')) {
     const stage = item.dataset.stage;
-    item.classList.toggle('active', !job.terminal && stage === job.stage);
+    item.classList.toggle('active', !job.terminal && stage === activeStage);
     item.classList.toggle('done', reached.has(stage) && stage !== failedStage);
     item.classList.toggle('failed', stage === failedStage);
   }
@@ -535,11 +540,6 @@ function renderRepairs(job) {
     );
     elements.repairList.append(item);
   }
-}
-
-function pushEvent(event) {
-  const key = `${event.ts}|${event.type}|${event.summary || ''}`;
-  if (!state.events.some((item) => `${item.ts}|${item.type}|${item.summary || ''}` === key)) state.events.push(event);
 }
 
 function upsertJob(job) {

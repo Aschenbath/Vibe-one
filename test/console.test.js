@@ -43,6 +43,47 @@ test('session status exposes key presence but never the key', () => {
   assert.equal(JSON.stringify(status).includes('top-secret'), false);
 });
 
+test('studio state reducer keeps workspace transitions pure and replays events once', async () => {
+  const { createStudioState, reduceStudio, deriveStudioStage } = await import(
+    '../src/console/public/studio-state.js'
+  );
+  const initial = createStudioState();
+  const event = { ts: '2026-07-13T12:00:00.000Z', type: 'build:start', summary: 'building' };
+  let studio = reduceStudio(initial, { type: 'JOB_STARTED', runId: 'r1' });
+  studio = reduceStudio(studio, { type: 'DEVICE_SELECTED', device: 'mobile' });
+  studio = reduceStudio(studio, { type: 'INSPECTOR_OPENED' });
+  studio = reduceStudio(studio, { type: 'EVENTS_REPLAYED', events: [event, event] });
+  studio = reduceStudio(studio, { type: 'EVENT_RECEIVED', event });
+  studio = reduceStudio(studio, {
+    type: 'JOB_UPDATED',
+    job: { id: 'r1', status: 'running', stage: 'building' },
+  });
+
+  assert.deepEqual(
+    { mode: studio.mode, device: studio.canvas.device, drawers: studio.drawers },
+    { mode: 'flow', device: 'mobile', drawers: { timeline: false, inspector: true } },
+  );
+  assert.deepEqual(studio.events, [event]);
+  assert.equal(deriveStudioStage(studio), 'building');
+  assert.deepEqual(initial, {
+    mode: 'focus',
+    runId: null,
+    selectedJob: null,
+    events: [],
+    canvas: { device: 'desktop' },
+    drawers: { timeline: false, inspector: false },
+  });
+  assert.notEqual(studio, initial);
+  assert.notEqual(studio.canvas, initial.canvas);
+  assert.notEqual(studio.drawers, initial.drawers);
+  assert.notEqual(studio.events, initial.events);
+
+  const runtimeStatus = { hasApiKey: true };
+  const focused = reduceStudio({ ...studio, status: runtimeStatus }, { type: 'WORKSPACE_FOCUSED' });
+  assert.equal(focused.mode, 'focus');
+  assert.equal(focused.status, runtimeStatus);
+});
+
 test('a job streams stages and rejects concurrent starts', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-job-'));
   let release;
@@ -1020,6 +1061,29 @@ test('HTTP responses include local-console browser security headers', async () =
     assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
     assert.match(response.headers.get('content-security-policy'), /default-src 'self'/);
     assert.match(response.headers.get('content-security-policy'), /frame-src http:\/\/127\.0\.0\.1:\*/);
+  } finally {
+    await app.close();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('console serves the Studio state module as same-origin JavaScript', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-studio-state-module-'));
+  const app = createConsoleServer({ runsRoot: path.join(root, 'runs'), env: {} });
+  const address = await app.listen(0);
+
+  try {
+    const response = await fetch(`${address.url}studio-state.js`);
+    const source = await response.text();
+
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get('content-type'), /^text\/javascript; charset=utf-8$/);
+    assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
+    assert.match(response.headers.get('content-security-policy'), /script-src 'self'/);
+    assert.match(source, /export function createStudioState/);
+    assert.match(source, /export function reduceStudio/);
+    assert.match(source, /export function deriveStudioStage/);
+    assert.doesNotMatch(source, /\bfetch\s*\(|\bEventSource\b|document\.|window\./);
   } finally {
     await app.close();
     await fs.rm(root, { recursive: true, force: true });
