@@ -26,6 +26,7 @@ export async function runPipeline({
   planOnly = false,
   provider: injectedProvider,
   uiCollector = collectUiQuality,
+  promoteCandidate = promotePolishCandidate,
 }) {
   const ctx = await createRunContext(targetDir, config);
   const provider = injectedProvider ?? createProvider(config);
@@ -48,6 +49,10 @@ export async function runPipeline({
     changedFiles: [],
     draftReview: null,
     candidateReview: null,
+    recovery: {
+      draftRetained: false,
+      recoveryRequired: false,
+    },
   };
   const qualityDir = ctx.qualityDir ?? path.join(ctx.runDir, 'quality');
   await fs.mkdir(qualityDir, { recursive: true });
@@ -172,25 +177,32 @@ export async function runPipeline({
           draftEvidence: safeVerdictLineage(draftVerdict),
           candidateEvidence: safeVerdictLineage(candidateVerdict),
         };
-        if (!candidateVerdict.reviewResult?.pass) {
-          throw new Error('polish candidate verification failed');
-        }
-        polishStage = 'promotion';
-        await promotePolishCandidate(ctx);
-        polishResult.status = 'promoted';
         finalReview = candidateVerdict.reviewResult;
         shots = candidateVerdict.shots;
         scenarioResults = candidateVerdict.scenarioResults ?? [];
         visualResults = candidateVerdict.visualResults ?? [];
         uiQuality = candidateVerdict.uiQuality ?? uiQuality;
+        if (!candidateVerdict.reviewResult?.pass) {
+          throw new Error('polish candidate verification failed');
+        }
+        polishStage = 'promotion';
+        await promoteCandidate(ctx);
+        polishResult.status = 'promoted';
         status = 'success';
       } catch (error) {
         status = 'failed';
-        polishResult.status = 'failed';
+        const failureEvidence = safePolishFailureEvidence(error);
+        polishResult = {
+          ...polishResult,
+          status: 'failed',
+          ...failureEvidence,
+        };
         fatal = polishFailure(error);
         await ctx.logEvent('polish:failed', {
           code: 'POLISH_FAILED',
           summary: polishFailureSummary(polishStage, polishResult.changedFiles.length),
+          failureCauseCode: failureEvidence.failureCauseCode,
+          ...failureEvidence.recovery,
         });
       }
     }
@@ -238,6 +250,10 @@ export async function runPipeline({
       runId: ctx.runId,
       runDir: ctx.runDir,
       status,
+      finalReview,
+      shots,
+      scenarioResults,
+      visualResults,
       uiQuality,
       qualityHistory,
       polish: polishResult,
@@ -436,6 +452,19 @@ function polishFailure(error) {
   failure.code = 'POLISH_FAILED';
   failure.cause = error;
   return failure;
+}
+
+function safePolishFailureEvidence(error) {
+  const code = String(error?.code ?? '');
+  return {
+    failureCauseCode: code === 'POLISH_ROLLBACK_FAILED'
+      ? 'POLISH_ROLLBACK_FAILED'
+      : 'POLISH_FAILED',
+    recovery: {
+      draftRetained: error?.draftRetained === true,
+      recoveryRequired: error?.recoveryRequired === true,
+    },
+  };
 }
 
 function polishFailureSummary(stage, changedFiles) {

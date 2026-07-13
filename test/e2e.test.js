@@ -661,6 +661,14 @@ test('failed polish verification keeps the working draft and returns POLISH_FAIL
     assert.deepEqual(result.polish.changedFiles, ['src/App.jsx']);
     assert.equal(result.polish.draftReview.pass, true);
     assert.equal(result.polish.candidateReview.pass, false);
+    assert.equal(result.finalReview.pass, false);
+    assert.equal(result.uiQuality.summary.pass, true);
+    assert.equal(result.scenarioResults[0].pass, false);
+    assert.match(
+      result.finalReview.failed.map((check) => check.name).join(' '),
+      /scenario/i,
+    );
+    assert.equal(result.polish.draftEvidence.review.pass, true);
 
     const original = await fs.readFile(path.join(result.runDir, 'app', 'src', 'App.jsx'), 'utf8');
     const candidate = await fs.readFile(
@@ -691,6 +699,90 @@ test('failed polish verification keeps the working draft and returns POLISH_FAIL
     assert.doesNotMatch(eventsText, /private\.invalid|Broken item|[A-Z]:\\/i);
     assert.equal(events.filter((event) => event.type === 'fix:start').length, 0);
     assert.equal(events.filter((event) => event.type === 'review').length, 2);
+  } finally {
+    await fs.rm(tmpRoot, { recursive: true, force: true });
+  }
+});
+
+test('failed polish promotion exposes safe rollback recovery evidence', { skip: !ENABLED, timeout: 300_000 }, async () => {
+  const tmpRoot = await fs.realpath(
+    await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-one-polish-rollback-failed-')),
+  );
+  const targetDir = path.join(tmpRoot, 'target');
+  const brief = '# Expenses\nList expenses with a total and an Add button.\n';
+  await fs.mkdir(path.join(targetDir, 'input'), { recursive: true });
+  await fs.writeFile(path.join(targetDir, 'input', 'brief.md'), brief);
+  const provider = createPolishLifecycleProvider();
+  const config = {
+    stack: 'react-vite',
+    viewport: { width: 390, height: 844 },
+    maxRepairRounds: 0,
+    maxPolishRounds: 1,
+    model: 'stub-polish-rollback-failed',
+    baseUrl: 'https://private.invalid/v1',
+    temperature: 0.2,
+    brief,
+    references: [],
+    visualThreshold: 0.62,
+    runsRoot: path.join(tmpRoot, 'runs'),
+  };
+  const rollbackError = new Error('raw OS failure at D:/private/candidate');
+  rollbackError.code = 'POLISH_ROLLBACK_FAILED';
+  rollbackError.draftRetained = true;
+  rollbackError.recoveryRequired = true;
+  try {
+    const result = await runPipeline({
+      targetDir,
+      config,
+      provider,
+      promoteCandidate: async () => {
+        throw rollbackError;
+      },
+    });
+    assert.equal(result.status, 'failed');
+    assert.equal(result.errorCode, 'POLISH_FAILED');
+    assert.equal(provider.observed.buildCalls, 1);
+    assert.equal(provider.observed.polishCalls, 1);
+    assert.equal(result.polish.status, 'failed');
+    assert.equal(result.polish.failureCauseCode, 'POLISH_ROLLBACK_FAILED');
+    assert.deepEqual(result.polish.recovery, {
+      draftRetained: true,
+      recoveryRequired: true,
+    });
+    assert.equal(result.finalReview.pass, true);
+
+    const draft = await fs.readFile(path.join(result.runDir, 'app', 'src', 'App.jsx'), 'utf8');
+    const candidate = await fs.readFile(
+      path.join(result.runDir, 'polish', 'candidate', 'src', 'App.jsx'),
+      'utf8',
+    );
+    assert.doesNotMatch(draft, /data-polish-marker/);
+    assert.match(candidate, /data-polish-marker='verified'/);
+    await assert.rejects(
+      fs.stat(path.join(result.runDir, 'polish', 'draft-app')),
+      { code: 'ENOENT' },
+    );
+
+    const eventsText = await fs.readFile(
+      path.join(result.runDir, 'logs', 'events.jsonl'),
+      'utf8',
+    );
+    const events = eventsText.trim().split('\n').map((line) => JSON.parse(line));
+    const failed = events.filter((event) => event.type === 'polish:failed');
+    assert.equal(failed.length, 1);
+    assert.deepEqual(failed[0], {
+      ts: failed[0].ts,
+      type: 'polish:failed',
+      code: 'POLISH_FAILED',
+      summary: failed[0].summary,
+      failureCauseCode: 'POLISH_ROLLBACK_FAILED',
+      draftRetained: true,
+      recoveryRequired: true,
+    });
+    assert.doesNotMatch(
+      JSON.stringify(failed[0]),
+      /raw OS failure|private\.invalid|D:/i,
+    );
   } finally {
     await fs.rm(tmpRoot, { recursive: true, force: true });
   }
