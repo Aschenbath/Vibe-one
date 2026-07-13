@@ -34,12 +34,18 @@ export async function writeReport(ctx, {
     visualHistory, error, design, quality, polish: polishSummary,
   });
   const file = path.join(ctx.runDir, 'DELIVERY_REPORT.md');
-  await publishEvidenceBundle(ctx.runDir, [
+  const artifacts = [
     { parts: ['DELIVERY_REPORT.md'], content: lines.join('\n') },
     { parts: ['design.json'], content: jsonContent(design) },
     { parts: ['quality', 'summary.json'], content: jsonContent(quality) },
     { parts: ['polish', 'summary.json'], content: jsonContent(polishSummary) },
-  ], evidenceFs);
+  ];
+  await publishEvidenceBundle(
+    ctx.runDir,
+    artifacts,
+    collectRasterArtifacts(quality, polishSummary, shots),
+    evidenceFs,
+  );
   await ctx.logEvent('report:written', { summary: 'DELIVERY_REPORT.md' });
   return file;
 }
@@ -154,7 +160,51 @@ function selectLineage(evidence, fallbackReview) {
   return {
     review: selectReview(evidence?.review ?? fallbackReview),
     evidence: (evidence?.screenshots ?? []).map(safeImageName).filter(Boolean),
+    visualEvidence: (evidence?.visualResults ?? [])
+      .map((item) => safeImageName(item?.actualImage))
+      .filter(Boolean),
   };
+}
+
+function collectRasterArtifacts(quality, polish, shots) {
+  const artifacts = new Map();
+  const add = (sourceParts, targetParts, name) => {
+    const file = safeImageName(name);
+    if (!file) return;
+    const key = [...targetParts, file].join('/');
+    artifacts.set(key, { sourceParts: [...sourceParts, file], parts: [...targetParts, file] });
+  };
+  const addQualityRound = (round, sourceParts, targetParts) => {
+    for (const item of [...(round?.results ?? []), ...(round?.summary?.failures ?? [])]) {
+      add(sourceParts, targetParts, item?.screenshot);
+    }
+    for (const file of round?.evidence ?? []) add(sourceParts, targetParts, file);
+  };
+
+  for (const round of quality?.rounds ?? []) {
+    addQualityRound(round, ['quality'], ['quality']);
+  }
+  if (quality?.terminal) {
+    const polishQuality = quality.terminal.bucket === 'polish-quality';
+    addQualityRound(
+      quality.terminal,
+      polishQuality ? ['polish', 'quality'] : ['quality'],
+      polishQuality ? ['polish', 'quality'] : ['quality'],
+    );
+  }
+  for (const file of polish?.draft?.evidence ?? []) {
+    add(['screenshots'], ['screenshots'], file);
+  }
+  for (const shot of shots ?? []) {
+    add(['screenshots'], ['screenshots'], shot?.file);
+  }
+  for (const file of polish?.candidate?.evidence ?? []) {
+    add(['polish', 'screenshots'], ['polish', 'screenshots'], file);
+  }
+  for (const file of polish?.candidate?.visualEvidence ?? []) {
+    add(['polish', 'screenshots'], ['polish', 'visual'], file);
+  }
+  return [...artifacts.values()];
 }
 
 function selectReview(value) {
@@ -381,7 +431,7 @@ function jsonContent(value) {
   return JSON.stringify(value, null, 2) + '\n';
 }
 
-async function publishEvidenceBundle(runDir, artifacts, fsOps = fs) {
+async function publishEvidenceBundle(runDir, artifacts, rasters = [], fsOps = fs) {
   const bundleId = randomUUID();
   const stageDir = path.join(runDir, '.evidence-stage-' + bundleId);
   const bundlesDir = path.join(runDir, '.evidence-bundles');
@@ -393,6 +443,11 @@ async function publishEvidenceBundle(runDir, artifacts, fsOps = fs) {
     await Promise.all(artifacts.map(({ parts, content }) => (
       atomicWrite(path.join(stageDir, ...parts), content, fsOps)
     )));
+    await Promise.all(rasters.map(async ({ sourceParts, parts }) => {
+      const content = await readStableRaster(runDir, sourceParts, fsOps);
+      if (content === null) return;
+      await atomicWrite(path.join(stageDir, ...parts), content, fsOps);
+    }));
     await fsOps.mkdir(bundlesDir, { recursive: true });
     await fsOps.rename(stageDir, bundleDir);
     bundlePublished = true;
@@ -412,11 +467,92 @@ async function publishEvidenceBundle(runDir, artifacts, fsOps = fs) {
   }
 }
 
+async function readStableRaster(runDir, parts, fsOps) {
+  const base = path.resolve(runDir);
+  const canonicalBase = await fsOps.realpath(base);
+  let file = base;
+  let before = null;
+  for (const part of parts) {
+    file = path.resolve(file, part);
+    if (!isContained(base, file)) throw evidenceLinkRejected();
+    try {
+      before = await fsOps.lstat(file);
+    } catch (error) {
+      if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return null;
+      throw error;
+    }
+    if (before.isSymbolicLink()) throw evidenceLinkRejected();
+  }
+
+  let handle;
+  try {
+    handle = await fsOps.open(file, 'r');
+  } catch (error) {
+    if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return null;
+    throw error;
+  }
+  try {
+    const opened = await handle.stat();
+    requireSingleLink(opened);
+    const canonicalFile = await fsOps.realpath(file);
+    const current = await fsOps.lstat(file);
+    if (!opened.isFile() || !isContained(canonicalBase, canonicalFile)) throw evidenceLinkRejected();
+    requireSingleLink(current);
+    if (current.isSymbolicLink() || !sameFileIdentity(opened, current)) throw evidenceChanged();
+    const data = await handle.readFile();
+    const after = await handle.stat();
+    requireSingleLink(after);
+    if (!sameStableFile(opened, after)) throw evidenceChanged();
+    return data;
+  } finally {
+    await handle.close().catch(() => {});
+  }
+}
+
+function requireSingleLink(stat) {
+  if (Number(stat.nlink) !== 1) throw evidenceLinkRejected();
+}
+
+function isContained(root, file) {
+  const relative = path.relative(root, file);
+  return relative === '' || (!relative.startsWith('..' + path.sep) && !path.isAbsolute(relative));
+}
+
+function sameFileIdentity(left, right) {
+  const leftIno = Number(left.ino);
+  const rightIno = Number(right.ino);
+  if (Number.isFinite(leftIno) && Number.isFinite(rightIno) && (leftIno !== 0 || rightIno !== 0)) {
+    return Number(left.dev) === Number(right.dev) && leftIno === rightIno;
+  }
+  return Number(left.size) === Number(right.size)
+    && Number(left.mtimeMs) === Number(right.mtimeMs)
+    && Number(left.ctimeMs) === Number(right.ctimeMs);
+}
+
+function sameStableFile(left, right) {
+  return sameFileIdentity(left, right)
+    && Number(left.size) === Number(right.size)
+    && Number(left.mtimeMs) === Number(right.mtimeMs)
+    && Number(left.ctimeMs) === Number(right.ctimeMs);
+}
+
+function evidenceLinkRejected() {
+  return Object.assign(new Error('Linked evidence cannot be published.'), {
+    code: 'EVIDENCE_LINK_REJECTED',
+  });
+}
+
+function evidenceChanged() {
+  return Object.assign(new Error('Evidence changed during publication.'), {
+    code: 'EVIDENCE_CHANGED',
+  });
+}
+
 async function atomicWrite(file, content, fsOps = fs) {
   await fsOps.mkdir(path.dirname(file), { recursive: true });
   const temporary = `${file}.tmp-${process.pid}-${randomUUID()}`;
   try {
-    await fsOps.writeFile(temporary, content, 'utf8');
+    await fsOps.writeFile(temporary, content, typeof content === 'string' ? 'utf8' : undefined);
     await fsOps.rename(temporary, file);
   } catch (error) {
     await fsOps.rm(temporary, { force: true }).catch(() => {});

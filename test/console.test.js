@@ -719,6 +719,95 @@ test('committed evidence reads an immutable bundle when the root mirror changes 
   }
 });
 
+test('HTTP evidence URLs keep every referenced raster in the committed bundle', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-raster-bundle-'));
+  const runId = 'raster-bundle-run-2026-07-13T14-45-00';
+  const runDir = path.join(root, runId);
+  const files = [
+    ['quality', 'draft-quality.png'],
+    ['polish', 'quality', 'candidate-quality.webp'],
+    ['polish', 'screenshots', 'candidate.png'],
+    ['polish', 'screenshots', 'visual-candidate.jpg'],
+    ['screenshots', 'draft.png'],
+  ];
+  await Promise.all(files.map((parts) => fs.mkdir(path.dirname(path.join(runDir, ...parts)), { recursive: true })));
+  await Promise.all(files.map((parts) => fs.writeFile(path.join(runDir, ...parts), ONE_PIXEL_PNG)));
+  await fs.writeFile(path.join(runDir, 'quality', 'unreferenced.png'), ONE_PIXEL_PNG);
+  const ctx = {
+    runId,
+    runDir,
+    events: [],
+    usage: { promptTokens: 0, completionTokens: 0, calls: 0 },
+    async logEvent(type, data) { this.events.push({ type, ...data }); },
+  };
+
+  await writeReport(ctx, {
+    config: { model: 'stub', stack: 'react-vite', maxRepairRounds: 1, references: [] },
+    spec: { summary: 'immutable raster evidence', pages: [], scenarios: [], acceptance: [] },
+    status: 'success', rounds: 0, finalReview: { pass: true, checks: [] },
+    shots: [{ page: 'Late', file: 'late.png', bytes: ONE_PIXEL_PNG.length }],
+    scenarioResults: [],
+    qualityHistory: [{
+      round: 0,
+      summary: { pass: true, failures: [] },
+      results: [{ page: 'Draft', viewport: 'desktop', pass: true, screenshot: 'draft-quality.png' }],
+    }],
+    uiQuality: {
+      summary: { pass: true, failures: [] },
+      results: [{ page: 'Candidate', viewport: 'desktop', pass: true, screenshot: 'candidate-quality.webp' }],
+    },
+    polish: {
+      status: 'promoted', changedFiles: ['src/App.jsx'],
+      draftEvidence: {
+        review: { pass: true, checks: [] },
+        screenshots: ['draft.png'],
+      },
+      candidateEvidence: {
+        review: { pass: true, checks: [] },
+        uiQuality: { summary: { pass: true, failures: [] } },
+        screenshots: ['candidate.png'],
+        visualResults: [{ actualImage: 'visual-candidate.jpg' }],
+      },
+      recovery: { draftRetained: true, recoveryRequired: false },
+    },
+  });
+
+  const replacement = Buffer.from('replacement-raster');
+  await Promise.all(files.map((parts) => fs.writeFile(path.join(runDir, ...parts), replacement)));
+  await fs.writeFile(path.join(runDir, 'screenshots', 'late.png'), replacement);
+  const app = createConsoleServer({ runsRoot: root, env: {} });
+  const address = await app.listen(0);
+  try {
+    const quality = await (await fetch(`${address.url}api/jobs/${runId}/quality`)).json();
+    const polish = await (await fetch(`${address.url}api/jobs/${runId}/polish`)).json();
+    const urls = [
+      quality.rounds[0].results[0].screenshotUrl,
+      quality.terminal.results[0].screenshotUrl,
+      polish.candidate.evidence[0].url,
+      polish.candidate.visualEvidence[0].url,
+    ];
+    const draftUrl = polish.draft.evidence[0].url;
+    assert.deepEqual(urls.map((url) => url.split('/artifacts/')[1].split('/')[0]), [
+      'quality', 'polish-quality', 'polish-screenshots', 'polish-visual',
+    ]);
+    for (const url of urls) {
+      const response = await fetch(new URL(url, address.url));
+      assert.equal(response.status, 200);
+      assert.deepEqual(Buffer.from(await response.arrayBuffer()), ONE_PIXEL_PNG);
+    }
+    const draftResponse = await fetch(new URL(draftUrl, address.url));
+    assert.equal(draftResponse.status, 200);
+    assert.deepEqual(Buffer.from(await draftResponse.arrayBuffer()), ONE_PIXEL_PNG);
+    const late = await fetch(`${address.url}api/jobs/${runId}/screenshots/late.png`);
+    assert.equal(late.status, 404);
+    const unreferenced = await fetch(`${address.url}api/jobs/${runId}/artifacts/quality/unreferenced.png`);
+    assert.equal(unreferenced.status, 404);
+  } finally {
+    await app.close();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test('failed republish keeps the previous committed evidence bundle readable', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-bundle-republish-'));
   const runId = 'bundle-republish-run-2026-07-13T14-31-00';

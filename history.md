@@ -2,7 +2,7 @@
 
 ## 2026-07-13
 
-- 15:17:34 +08:00: Product Studio quality redesign Task 10 completed after TDD, independent specification review, and independent code-quality review. The bilingual Delivery Report now persists safe design/UI/visual/polish sidecars; `/design`, `/quality`, `/polish`, and evidence APIs read jailed immutable evidence bundles through an atomic bundle pointer, retain legacy no-marker runs, redact labeled credentials and raw raster payloads, reject linked/raced evidence, and preserve the root report as a compatibility mirror. Final commits: `d6a5091`, `e4b3eae`, `20bd20d`; verification: focused 92/92, default-equivalent 107 pass / 17 opt-in skip / 0 fail.
+ 19:03:18 +08:00: Product Studio quality redesign Task 10 completed after TDD, independent specification review, and two independent code-quality review rounds. The bilingual Delivery Report now persists safe design/UI/visual/polish sidecars plus every referenced UI/polish/draft raster in one atomic immutable bundle; marker-mode APIs never fall back to mutable root evidence, while legacy no-marker runs remain readable. Publication rejects linked, hard-linked, escaped, or raced files; missing raster stays a stable 404 instead of later reviving from mutable storage. Commits before final hardening: `d6a5091`, `e4b3eae`, `20bd20d`; final verification: Task 10 core/console 93/93 and default suite 108 pass / 17 opt-in skip / 0 fail.
 - 08:28:20 +08:00: Task 9 completed: one bounded polish pass is integrated into the pipeline only after the draft is fully green; the candidate must pass build, content, interaction, UI, and visual re-verification before promotion, and terminal evidence plus rollback-recovery flags remain consistent on failure (`0813bd1`, `094017b`).
 
 ## 2026-07-12

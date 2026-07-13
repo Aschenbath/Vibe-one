@@ -73,11 +73,23 @@ export function createRunStore(runsRoot, { evidenceFs = fs } = {}) {
 
   async function readScreenshot(id, name) {
     const screenshotsDir = jailed(resolveRunDir(id), 'screenshots');
-    const file = jailed(screenshotsDir, String(name));
+    const filename = String(name);
+    const file = jailed(screenshotsDir, filename);
     if (path.extname(file).toLowerCase() !== '.png') {
       throw new ConsoleError('SCREENSHOT_INVALID', 'Only PNG screenshots are available.', 400);
     }
     try {
+      const prefix = await resolveEvidencePrefix(root, String(id), evidenceFs);
+      if (prefix && prefix.length > 1) {
+        const committed = await readJailedFile(
+          root,
+          [...prefix, 'screenshots', filename],
+          evidenceFs,
+        );
+        if (committed?.stat.isFile()) return committed.data;
+        throw new ConsoleError('SCREENSHOT_NOT_FOUND', 'Screenshot not found.', 404);
+      }
+      if (!prefix) throw new ConsoleError('SCREENSHOT_NOT_FOUND', 'Screenshot not found.', 404);
       return await fs.readFile(file);
     } catch (error) {
       if (error.code === 'ENOENT') throw new ConsoleError('SCREENSHOT_NOT_FOUND', 'Screenshot not found.', 404);
@@ -138,9 +150,13 @@ export function createRunStore(runsRoot, { evidenceFs = fs } = {}) {
     }
     resolveRunDir(id);
     try {
+      const prefix = await resolveEvidencePrefix(root, String(id), evidenceFs);
+      if (!prefix) {
+        throw new ConsoleError('EVIDENCE_NOT_FOUND', 'Evidence file not found.', 404);
+      }
       const inspected = await readJailedFile(
         root,
-        [String(id), ...parts, filename],
+        [...prefix, ...parts, filename],
         evidenceFs,
       );
       if (!inspected || !inspected.stat.isFile()) {
@@ -591,6 +607,8 @@ function selectLineage(value, id, bucket) {
           ? `/api/jobs/${encodeURIComponent(id)}/screenshots/${encodeURIComponent(file)}`
           : evidenceUrl(id, bucket, file),
       })),
+    visualEvidence: [...new Set((value.visualEvidence ?? []).map(safeImageName).filter(Boolean))]
+      .map((file) => ({ file, url: evidenceUrl(id, 'polish-visual', file) })),
   };
 }
 
