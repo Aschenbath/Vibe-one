@@ -1,6 +1,10 @@
 import fs from 'node:fs/promises';
+import { constants as FS_CONSTANTS } from 'node:fs';
 import path from 'node:path';
 import { ConsoleError } from './errors.js';
+import { sanitizeEvidenceText } from '../reporter/deliveryReport.js';
+
+const EVIDENCE_BUNDLE_MARKER = '.evidence-bundle.json';
 
 const EVIDENCE_BUCKETS = new Map([
   ['quality', ['quality']],
@@ -15,7 +19,7 @@ const EVIDENCE_TYPES = new Map([
   ['.webp', 'image/webp'],
 ]);
 
-export function createRunStore(runsRoot) {
+export function createRunStore(runsRoot, { evidenceFs = fs } = {}) {
   const root = path.resolve(runsRoot);
 
   async function listRuns() {
@@ -52,9 +56,14 @@ export function createRunStore(runsRoot) {
   }
 
   async function readReport(id) {
-    const file = jailed(resolveRunDir(id), 'DELIVERY_REPORT.md');
+    const runDir = resolveRunDir(id);
     try {
-      return await fs.readFile(file, 'utf8');
+      if (!await evidenceBundleIsReadable(runDir, evidenceFs)) {
+        throw new ConsoleError('REPORT_NOT_FOUND', 'Delivery report not found.', 404);
+      }
+      const inspected = await readJailedFile(root, [String(id), 'DELIVERY_REPORT.md'], evidenceFs, 'utf8');
+      if (!inspected) throw new ConsoleError('REPORT_NOT_FOUND', 'Delivery report not found.', 404);
+      return inspected.data;
     } catch (error) {
       if (error.code === 'ENOENT') throw new ConsoleError('REPORT_NOT_FOUND', 'Delivery report not found.', 404);
       throw error;
@@ -97,19 +106,19 @@ export function createRunStore(runsRoot) {
 
   async function readDesign(id) {
     resolveRunDir(id);
-    const value = await readSidecar(root, String(id), 'design.json');
+    const value = await readSidecar(root, evidenceFs, String(id), 'design.json');
     return selectDesign(value);
   }
 
   async function readQuality(id) {
     resolveRunDir(id);
-    const value = await readSidecar(root, String(id), 'quality', 'summary.json');
+    const value = await readSidecar(root, evidenceFs, String(id), 'quality', 'summary.json');
     return selectQuality(value, id);
   }
 
   async function readPolish(id) {
     resolveRunDir(id);
-    const value = await readSidecar(root, String(id), 'polish', 'summary.json');
+    const value = await readSidecar(root, evidenceFs, String(id), 'polish', 'summary.json');
     return selectPolish(value, id);
   }
 
@@ -128,11 +137,15 @@ export function createRunStore(runsRoot) {
     }
     resolveRunDir(id);
     try {
-      const inspected = await inspectJailed(root, String(id), ...parts, filename);
+      const inspected = await readJailedFile(
+        root,
+        [String(id), ...parts, filename],
+        evidenceFs,
+      );
       if (!inspected || !inspected.stat.isFile()) {
         throw new ConsoleError('EVIDENCE_NOT_FOUND', 'Evidence file not found.', 404);
       }
-      return { data: await fs.readFile(inspected.file), type };
+      return { data: inspected.data, type };
     } catch (error) {
       if (error instanceof ConsoleError) throw error;
       if (error.code === 'ENOENT') {
@@ -162,7 +175,7 @@ export function createRunStore(runsRoot) {
     if (!stat.isDirectory()) return null;
 
     const [report, events, screenshots, references, visualComparisons, appExists] = await Promise.all([
-      readOptional(path.join(runDir, 'DELIVERY_REPORT.md')),
+      readCommittedOptional(runDir, evidenceFs, 'DELIVERY_REPORT.md'),
       readEvents(path.join(runDir, 'logs', 'events.jsonl')),
       readScreenshots(path.join(runDir, 'screenshots')),
       readReferences(path.join(runDir, 'references')),
@@ -223,6 +236,33 @@ async function readOptional(file) {
   } catch (error) {
     if (error.code === 'ENOENT') return '';
     throw error;
+  }
+}
+
+async function readCommittedOptional(runDir, fsOps, ...parts) {
+  if (!await evidenceBundleIsReadable(runDir, fsOps)) return '';
+  const inspected = await readJailedFile(
+    path.dirname(runDir),
+    [path.basename(runDir), ...parts],
+    fsOps,
+    'utf8',
+  );
+  return inspected?.data ?? '';
+}
+
+async function evidenceBundleIsReadable(runDir, fsOps) {
+  const inspected = await readJailedFile(
+    path.dirname(runDir),
+    [path.basename(runDir), EVIDENCE_BUNDLE_MARKER],
+    fsOps,
+    'utf8',
+  );
+  if (!inspected) return true;
+  try {
+    const marker = JSON.parse(inspected.data);
+    return marker?.version === 1 && marker?.state === 'committed';
+  } catch {
+    return false;
   }
 }
 
@@ -295,22 +335,30 @@ function titleFromId(id) {
     .replace(/[-_]+/g, ' ');
 }
 
-async function readSidecar(root, ...parts) {
-  const inspected = await inspectJailed(root, ...parts);
+async function readSidecar(root, fsOps, ...parts) {
+  const runDir = jailed(root, String(parts[0] ?? ''));
+  if (!await evidenceBundleIsReadable(runDir, fsOps)) return null;
+  const inspected = await readJailedFile(root, parts, fsOps, 'utf8');
   if (!inspected) return null;
   if (!inspected.stat.isFile()) {
     throw new ConsoleError('EVIDENCE_JSON_INVALID', 'Evidence data is invalid.', 500);
   }
-  const content = await fs.readFile(inspected.file, 'utf8');
   try {
-    return JSON.parse(content);
+    return JSON.parse(inspected.data);
   } catch {
     throw new ConsoleError('EVIDENCE_JSON_INVALID', 'Evidence data is invalid.', 500);
   }
 }
 
-async function inspectJailed(root, ...parts) {
+async function readJailedFile(root, parts, fsOps, encoding = null) {
   const base = path.resolve(root);
+  let canonicalBase;
+  try {
+    canonicalBase = await fsOps.realpath(base);
+  } catch (error) {
+    if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return null;
+    throw error;
+  }
   const consumed = [];
   let stat = null;
   let file = base;
@@ -318,7 +366,7 @@ async function inspectJailed(root, ...parts) {
     consumed.push(part);
     file = jailed(base, ...consumed);
     try {
-      stat = await fs.lstat(file);
+      stat = await fsOps.lstat(file);
     } catch (error) {
       if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return null;
       throw error;
@@ -327,7 +375,73 @@ async function inspectJailed(root, ...parts) {
       throw new ConsoleError('EVIDENCE_LINK_REJECTED', 'Linked evidence is not available.', 400);
     }
   }
-  return { file, stat };
+
+  const flags = process.platform === 'win32'
+    ? 'r'
+    : FS_CONSTANTS.O_RDONLY | FS_CONSTANTS.O_NOFOLLOW;
+  let handle;
+  try {
+    handle = await fsOps.open(file, flags);
+  } catch (error) {
+    if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return null;
+    if (error.code === 'ELOOP') {
+      throw new ConsoleError('EVIDENCE_LINK_REJECTED', 'Linked evidence is not available.', 400);
+    }
+    throw error;
+  }
+
+  try {
+    const opened = await handle.stat();
+    if (!opened.isFile()) return { data: null, stat: opened };
+    let canonicalFile;
+    let current;
+    try {
+      canonicalFile = await fsOps.realpath(file);
+      current = await fsOps.lstat(file);
+    } catch (error) {
+      if (error.code === 'ENOENT' || error.code === 'ENOTDIR') throw evidenceChanged();
+      throw error;
+    }
+    if (!isContained(canonicalBase, canonicalFile)) {
+      throw new ConsoleError('EVIDENCE_LINK_REJECTED', 'Linked evidence is not available.', 400);
+    }
+    if (current.isSymbolicLink() || !sameFileIdentity(opened, current)) {
+      throw evidenceChanged();
+    }
+    const data = encoding ? await handle.readFile({ encoding }) : await handle.readFile();
+    const after = await handle.stat();
+    if (!sameStableFile(opened, after)) throw evidenceChanged();
+    return { data, stat: opened };
+  } finally {
+    await handle.close().catch(() => {});
+  }
+}
+
+function isContained(root, file) {
+  const relative = path.relative(root, file);
+  return relative === '' || (!relative.startsWith('..' + path.sep) && !path.isAbsolute(relative));
+}
+
+function sameFileIdentity(left, right) {
+  const leftIno = Number(left.ino);
+  const rightIno = Number(right.ino);
+  if (Number.isFinite(leftIno) && Number.isFinite(rightIno) && (leftIno !== 0 || rightIno !== 0)) {
+    return Number(left.dev) === Number(right.dev) && leftIno === rightIno;
+  }
+  return Number(left.size) === Number(right.size)
+    && Number(left.mtimeMs) === Number(right.mtimeMs)
+    && Number(left.ctimeMs) === Number(right.ctimeMs);
+}
+
+function sameStableFile(left, right) {
+  return sameFileIdentity(left, right)
+    && Number(left.size) === Number(right.size)
+    && Number(left.mtimeMs) === Number(right.mtimeMs)
+    && Number(left.ctimeMs) === Number(right.ctimeMs);
+}
+
+function evidenceChanged() {
+  return new ConsoleError('EVIDENCE_CHANGED', 'Evidence changed during secure read.', 409);
 }
 
 function selectDesign(value) {
@@ -481,7 +595,7 @@ function safeSelected(value, depth = 0) {
 
 function safeText(value, maxLength = 500) {
   const normalized = String(value ?? '').split(String.fromCharCode(92)).join('/');
-  return normalized
+  return sanitizeEvidenceText(normalized, maxLength)
     .replace(
       /(?:Error|TypeError|ReferenceError|SyntaxError|RangeError):[^\n]*(?:\n\s+at\s+[^\n]*)+/gu,
       '[redacted stack]',

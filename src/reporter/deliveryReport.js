@@ -5,6 +5,8 @@ import { randomUUID } from 'node:crypto';
 
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp']);
 const SAFE_POLISH_CAUSES = new Set(['POLISH_FAILED', 'POLISH_ROLLBACK_FAILED']);
+const EVIDENCE_BUNDLE_MARKER = '.evidence-bundle.json';
+const LABELED_SECRET = /(\b(?:api[\s_-]*key|token|secret|credential|authorization)\b\s*(?:=>|::|:=|=|:)\s*)(?:\x22[^\x22\r\n]*\x22|\x27[^\x27\r\n]*\x27|[^,;}\r\n]+)/gimu;
 
 export async function writeReport(ctx, {
   config,
@@ -32,11 +34,11 @@ export async function writeReport(ctx, {
     visualHistory, error, design, quality, polish: polishSummary,
   });
   const file = path.join(ctx.runDir, 'DELIVERY_REPORT.md');
-  await Promise.all([
-    atomicWrite(file, lines.join('\n')),
-    atomicWriteJson(path.join(ctx.runDir, 'design.json'), design),
-    atomicWriteJson(path.join(ctx.runDir, 'quality', 'summary.json'), quality),
-    atomicWriteJson(path.join(ctx.runDir, 'polish', 'summary.json'), polishSummary),
+  await publishEvidenceBundle(ctx.runDir, [
+    { parts: ['DELIVERY_REPORT.md'], content: lines.join('\n') },
+    { parts: ['design.json'], content: jsonContent(design) },
+    { parts: ['quality', 'summary.json'], content: jsonContent(quality) },
+    { parts: ['polish', 'summary.json'], content: jsonContent(polishSummary) },
   ]);
   await ctx.logEvent('report:written', { summary: 'DELIVERY_REPORT.md' });
   return file;
@@ -288,13 +290,15 @@ function renderVisual(history) {
   ]);
 }
 
-function safeText(value, maxLength = 500) {
+export function sanitizeEvidenceText(value, maxLength = 500) {
   return String(value ?? '')
     .replace(
       /(?:Error|TypeError|ReferenceError|SyntaxError|RangeError):[^\n]*(?:\n\s+at\s+[^\n]*)+/gu,
       '[redacted stack]',
     )
     .replace(/data:image\/[^;\s]+;base64,[A-Za-z0-9+/=]+/gi, '[redacted-image]')
+    .replace(/(?:iVBORw0KGgo|\/9j\/|UklGR)[A-Za-z0-9+/=]{24,}/g, '[redacted-image]')
+    .replace(LABELED_SECRET, (match, prefix) => prefix + '[redacted]')
     .replace(/https?:\/\/[^\s`)'\"]+/gi, '[redacted-url]')
     .replace(/\b[A-Za-z]:[\/][^\s`)'\"]+/g, '[redacted-path]')
     .replace(/\\[^\s`)'\"]+/g, '[redacted-path]')
@@ -306,6 +310,10 @@ function safeText(value, maxLength = 500) {
     .replace(/base64/gi, '[redacted-encoding]')
     .slice(0, maxLength)
     .trim();
+}
+
+function safeText(value, maxLength = 500) {
+  return sanitizeEvidenceText(value, maxLength);
 }
 
 function safeSelected(value, depth = 0) {
@@ -366,7 +374,30 @@ function join(value) {
 }
 
 async function atomicWriteJson(file, value) {
-  await atomicWrite(file, `${JSON.stringify(value, null, 2)}\n`);
+  await atomicWrite(file, jsonContent(value));
+}
+
+function jsonContent(value) {
+  return JSON.stringify(value, null, 2) + '\n';
+}
+
+async function publishEvidenceBundle(runDir, artifacts) {
+  const stageDir = path.join(runDir, '.evidence-stage-' + process.pid + '-' + randomUUID());
+  const marker = path.join(runDir, EVIDENCE_BUNDLE_MARKER);
+  await atomicWriteJson(marker, { version: 1, state: 'publishing' });
+  try {
+    await Promise.all(artifacts.map(({ parts, content }) => (
+      atomicWrite(path.join(stageDir, ...parts), content)
+    )));
+    for (const { parts } of artifacts) {
+      const destination = path.join(runDir, ...parts);
+      await fs.mkdir(path.dirname(destination), { recursive: true });
+      await fs.rename(path.join(stageDir, ...parts), destination);
+    }
+    await atomicWriteJson(marker, { version: 1, state: 'committed' });
+  } finally {
+    await fs.rm(stageDir, { recursive: true, force: true }).catch(() => {});
+  }
 }
 
 async function atomicWrite(file, content) {

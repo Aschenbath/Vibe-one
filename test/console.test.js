@@ -8,6 +8,7 @@ import { createJobManager } from '../src/console/jobManager.js';
 import { createRunStore } from '../src/console/runStore.js';
 import { createPreviewManager } from '../src/console/previewManager.js';
 import { createConsoleServer } from '../src/console/server.js';
+import { writeReport } from '../src/reporter/deliveryReport.js';
 
 const ONE_PIXEL_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
@@ -520,6 +521,142 @@ test('HTTP API exposes safe design quality polish and evidence routes', async ()
     assert.doesNotMatch(corruptText, /broken private|quality-api-corrupt|AppData|vibe-secret/i);
   } finally {
     await app.close();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('writeReport and HTTP evidence redact labeled secrets and raw raster base64 without hiding ordinary text', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-report-sanitize-'));
+  const runId = 'sanitize-report-run-2026-07-13T13-55-00';
+  const runDir = path.join(root, runId);
+  const rawPngBase64 = ONE_PIXEL_PNG.toString('base64');
+  const rawJpegBase64 = '/9j/' + 'A'.repeat(64);
+  const rawWebpBase64 = 'UklGR' + 'B'.repeat(64);
+  const ctx = {
+    runId,
+    runDir,
+    events: [],
+    usage: { promptTokens: 0, completionTokens: 0, calls: 0 },
+    async logEvent(type, data) { this.events.push({ type, ...data }); },
+  };
+
+  await writeReport(ctx, {
+    config: {
+      model: 'stub', stack: 'react-vite', maxRepairRounds: 1, references: [],
+    },
+    spec: {
+      summary: 'token usage dashboard; apiKey => opaque.custom/value-987654; token = arbitrary.token/value',
+      productDesign: { productType: 'Secret Garden catalog', targetUsers: ['analysts'] },
+      pages: [{
+        name: 'Overview', route: '/', purpose: 'authorization flow',
+        mustContain: [
+          'token usage',
+          'authorization: Custom opaque-auth-value',
+          rawPngBase64,
+          rawJpegBase64,
+        ],
+      }],
+      scenarios: [],
+      acceptance: [
+        'Secret Garden stays visible',
+        'credential :: another-custom-secret-value',
+        'secret := custom-secret-material',
+        rawWebpBase64,
+      ],
+    },
+    status: 'success', rounds: 0, finalReview: { pass: true, checks: [] },
+    shots: [], scenarioResults: [], qualityHistory: [], uiQuality: null,
+  });
+
+  const app = createConsoleServer({ runsRoot: root, env: {} });
+  const address = await app.listen(0);
+  try {
+    const report = await (await fetch(`${address.url}api/jobs/${runId}/report`)).text();
+    const design = await (await fetch(`${address.url}api/jobs/${runId}/design`)).text();
+    const published = `${report}\n${design}`;
+    assert.doesNotMatch(
+      published,
+      /opaque\.custom|arbitrary\.token|opaque-auth-value|another-custom-secret-value|custom-secret-material|iVBORw0KGgo|\/9j\/|UklGR/i,
+    );
+    assert.match(published, /token usage/);
+    assert.match(published, /Secret Garden/);
+    assert.match(published, /authorization flow/);
+  } finally {
+    await app.close();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('RunStore does not expose a partially published new evidence bundle', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-report-partial-'));
+  const runId = 'partial-report-run-2026-07-13T13-56-00';
+  const runDir = path.join(root, runId);
+  await fs.mkdir(runDir, { recursive: true });
+  await fs.writeFile(path.join(runDir, 'quality'), 'blocks the quality directory');
+  const ctx = {
+    runId,
+    runDir,
+    events: [],
+    usage: { promptTokens: 0, completionTokens: 0, calls: 0 },
+    async logEvent(type, data) { this.events.push({ type, ...data }); },
+  };
+
+  await assert.rejects(writeReport(ctx, {
+    config: { model: 'stub', stack: 'react-vite', maxRepairRounds: 1, references: [] },
+    spec: { summary: 'partial evidence', pages: [], scenarios: [], acceptance: [] },
+    status: 'failed', rounds: 0, finalReview: { pass: false, checks: [] },
+    shots: [], scenarioResults: [], qualityHistory: [], uiQuality: null,
+  }));
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (await fs.stat(path.join(runDir, 'design.json')).then(() => true, () => false)) break;
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+
+  const store = createRunStore(root);
+  const [design, polish] = await Promise.all([store.readDesign(runId), store.readPolish(runId)]);
+  assert.equal(design.available, false);
+  assert.equal(polish.available, false);
+  await fs.rm(root, { recursive: true, force: true });
+});
+
+test('secure evidence read rejects an lstat-to-open file swap without leaking raced content', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-evidence-race-'));
+  const runId = 'evidence-race-run-2026-07-13T14-10-00';
+  const runDir = path.join(root, runId);
+  const target = path.join(runDir, 'design.json');
+  const backup = path.join(runDir, 'design.safe.json');
+  const outside = path.join(root, 'outside-secret.json');
+  const racedSecret = 'race-private-credential-value';
+  await fs.mkdir(runDir, { recursive: true });
+  await fs.writeFile(target, JSON.stringify({ available: true, summary: 'safe design' }));
+  await fs.writeFile(outside, JSON.stringify({ available: true, summary: racedSecret }));
+  let raced = false;
+  const evidenceFs = {
+    ...fs,
+    async open(file, flags) {
+      if (!raced && path.resolve(file) === path.resolve(target)) {
+        raced = true;
+        await fs.rename(target, backup);
+        await fs.link(outside, target);
+        const handle = await fs.open(target, flags);
+        await fs.rm(target, { force: true });
+        await fs.rename(backup, target);
+        return handle;
+      }
+      return fs.open(file, flags);
+    },
+  };
+  const store = createRunStore(root, { evidenceFs });
+
+  try {
+    await assert.rejects(store.readDesign(runId), (error) => (
+      error.code === 'EVIDENCE_CHANGED'
+      && error.message === 'Evidence changed during secure read.'
+      && !error.message.includes(racedSecret)
+      && !error.message.includes(root)
+    ));
+    assert.equal(raced, true);
+  } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
 });
