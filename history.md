@@ -1,5 +1,21 @@
 # History
 
+## 2026-07-13
+
+- 15:17:34 +08:00: Product Studio quality redesign Task 10 completed after TDD, independent specification review, and independent code-quality review. The bilingual Delivery Report now persists safe design/UI/visual/polish sidecars; `/design`, `/quality`, `/polish`, and evidence APIs read jailed immutable evidence bundles through an atomic bundle pointer, retain legacy no-marker runs, redact labeled credentials and raw raster payloads, reject linked/raced evidence, and preserve the root report as a compatibility mirror. Final commits: `d6a5091`, `e4b3eae`, `20bd20d`; verification: focused 92/92, default-equivalent 107 pass / 17 opt-in skip / 0 fail.
+- 08:28:20 +08:00: Task 9 completed: one bounded polish pass is integrated into the pipeline only after the draft is fully green; the candidate must pass build, content, interaction, UI, and visual re-verification before promotion, and terminal evidence plus rollback-recovery flags remain consistent on failure (`0813bd1`, `094017b`).
+
+## 2026-07-12
+
+- 20:50:26 +08:00: Task 8 completed: one model polish call writes only bounded UI changes into an isolated candidate; source sanitization preserves legitimate app paths/URLs while removing private values, and screenshot inputs are jailed, link-rejected, magic-byte checked, MIME-verified, and size/count bounded (`94e574c`, `4e34cbf`).
+- 19:25:08 +08:00: Task 7 completed: bounded polish candidate lifecycle and promotion were isolated from the final app; copy rejects symlink/junction sources and promotion exposes rollback failure instead of silently losing the app (`bfe0029`, `662c623`).
+- 17:45:40 +08:00: Task 6 completed: UI audit is a real reviewer/fixer/pipeline delivery gate with bounded repair evidence; collector infrastructure failures stay fatal, per-round screenshots remain immutable, and fixer attachments are count/byte bounded (`86a15bb`, `3cb493d`).
+- 15:08:40 +08:00: Task 5 completed: Playwright collects ordered desktop/mobile DOM and screenshot evidence from the loopback preview only, excludes inherited hidden/disabled content, aggregates only truly visible text, and rejects cross-origin routes (`89e6e4c`, `20a6a9b`, `8cfcc60`).
+- 13:03:53 +08:00: Task 4 completed: deterministic pure UI audit rules and stable failure codes cover viewport, density, interaction targets, content, and WCAG AA contrast with correct large-text boundaries and explicit translucent-backdrop composition (`3bdc5e7`, `ab0f5f1`, `b73d23a`).
+- 09:41:13 +08:00: Task 3 completed: Builder enforces the 12-file / 24k output budget, mature UI contract, fixed dependency whitelist including `lucide-react`, and rejects oversized real `build()` output before model-authored files are written (`2ab4452`, `e691bb4`).
+- 09:02:46 +08:00: Task 2 completed: Planner validates executable product design, writes Chinese-first bilingual SPEC/PLAN artifacts including the product summary, and tells the model the same exact token/state thresholds enforced locally (`e84f43e`, `c2a879f`, `fbe2672`).
+- 07:17:13 +08:00: Task 1 completed: executable Product Design contract, validation, and Chinese-first bilingual rendering landed with distinct-state enforcement, rejection of generic-only tones, and support for concise valid labels (`e45fb98`, `e6ec173`, `7e32fd7`).
+
 ## 2026-07-09
 
 - 22:25:19: Created the initial `FRAMEWORK.md` for Vibe-one. Project positioning: a hands-off app replication pipeline that uses a single OpenAI-compatible API plus local scripts to turn product briefs/screenshots into runnable app artifacts with generated specs, verification, bounded repair loops, screenshots, token/cost tracking, and delivery reports. The first milestone should use text briefs before screenshot recognition.
