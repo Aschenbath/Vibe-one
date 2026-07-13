@@ -1113,6 +1113,161 @@ test('delivery report records input references and visual score history', async 
   await fs.rm(root, { recursive: true, force: true });
 });
 
+test('delivery report writes bilingual safe evidence and structured sidecars', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-bilingual-report-'));
+  const privateEndpoint = 'https://private.invalid/v1';
+  const privatePath = 'D:/private/vibe-secret/artifact.txt';
+  const privateImage = 'data:image/png;base64,private-image';
+  const privateCredential = 'sk-report-private-1234567890';
+  const ctx = {
+    runId: 'quality-run',
+    runDir: root,
+    events: [],
+    usage: { promptTokens: 120, completionTokens: 80, calls: 4 },
+    async logEvent(type, data) {
+      this.events.push({ type, ...data });
+    },
+  };
+  const visualHistory = [
+    { round: 0, results: [{ page: '质量概览', score: 0.54, threshold: 0.62, structure: 0.61, color: 0.3767, pass: false }] },
+    { round: 1, results: [{ page: '质量概览', score: 0.7812, threshold: 0.62, structure: 0.79, color: 0.7607, pass: true }] },
+  ];
+
+  await writeReport(ctx, {
+    config: {
+      model: `stub ${privateCredential} path=/srv/private/key.txt file=//server/share/key.txt`,
+      baseUrl: privateEndpoint,
+      apiKey: 'session-secret',
+      stack: 'react-vite',
+      maxRepairRounds: 1,
+      references: [{ name: 'home.png', width: 390, height: 844, type: 'image/png' }],
+    },
+    spec: {
+      summary: '客服质量工作台',
+      productDesign: {
+        ...PRODUCT_DESIGN,
+        tokens: {
+          ...PRODUCT_DESIGN.tokens,
+          apiKey: privateCredential,
+          authorization: `Bearer ${privateCredential}`,
+        },
+        endpoint: privateEndpoint,
+      },
+      pages: [
+        { name: '质量概览', route: '/', purpose: '定位风险趋势', mustContain: ['风险趋势'], privatePath },
+        { name: '会话复核', route: '/reviews', purpose: '完成会话复核', mustContain: ['复核队列'] },
+      ],
+      scenarios: [{
+        name: '筛选高风险会话',
+        route: '/',
+        steps: [{ action: 'click', target: '高风险' }],
+        expectText: '高风险会话',
+        screenshot: privateImage,
+      }],
+      acceptance: ['运营人员可以下钻到风险会话', '复核状态可以被更新'],
+      apiKey: 'session-secret',
+      baseUrl: privateEndpoint,
+    },
+    status: 'success',
+    rounds: 1,
+    finalReview: {
+      pass: true,
+      checks: [
+        { name: 'build succeeds', pass: true, detail: 'build exit 0' },
+        { name: 'scenario passes', pass: true, detail: '1/1 scenarios pass' },
+      ],
+    },
+    shots: [{ page: '质量概览', file: privatePath, bytes: 321 }],
+    scenarioResults: [{ name: '筛选高风险会话', pass: true, raw: privateEndpoint }],
+    visualHistory,
+    qualityHistory: [{
+      round: 0,
+      summary: { pass: false, failures: [{ code: 'HIT_TARGET_TOO_SMALL', page: '质量概览', viewport: 'mobile', screenshot: 'overview-mobile-round-0.png', detail: privatePath }] },
+      results: [
+        { page: '质量概览', viewport: 'desktop', pass: true, screenshot: 'overview-desktop-round-0.png', actualFile: privatePath },
+        { page: '质量概览', viewport: 'mobile', pass: false, screenshot: 'overview-mobile-round-0.png', actualFile: privatePath },
+      ],
+    }],
+    uiQuality: {
+      summary: { pass: true, failures: [] },
+      results: [
+        { page: '质量概览', viewport: 'desktop', pass: true, screenshot: 'overview-desktop-polish.png', actualFile: privatePath },
+        { page: '质量概览', viewport: 'mobile', pass: true, screenshot: 'overview-mobile-polish.png', actualFile: privatePath },
+      ],
+    },
+    polish: {
+      status: 'failed',
+      changedFiles: ['src/App.jsx', '../private.js', privatePath],
+      draftReview: { pass: true },
+      candidateReview: { pass: false },
+      draftEvidence: { review: { pass: true, checks: [{ name: 'draft passes', pass: true }] }, screenshots: ['draft.png'], secret: privateImage },
+      candidateEvidence: { review: { pass: false, checks: [{ name: 'candidate scenario', pass: false }] }, screenshots: ['candidate.png'], raw: privatePath },
+      failureCauseCode: 'POLISH_ROLLBACK_FAILED',
+      recovery: { draftRetained: true, recoveryRequired: true },
+      providerResponse: privateImage,
+    },
+    error: new Error(`upstream ${privateEndpoint} failed at ${privatePath}`),
+  });
+
+  const [report, design, quality, polish] = await Promise.all([
+    fs.readFile(path.join(root, 'DELIVERY_REPORT.md'), 'utf8'),
+    fs.readFile(path.join(root, 'design.json'), 'utf8').then(JSON.parse),
+    fs.readFile(path.join(root, 'quality', 'summary.json'), 'utf8').then(JSON.parse),
+    fs.readFile(path.join(root, 'polish', 'summary.json'), 'utf8').then(JSON.parse),
+  ]);
+  for (const heading of [
+    /# 交付报告 \/ Delivery Report/,
+    /## 概览 \/ Overview/,
+    /## 产品设计 \/ Product Design/,
+    /## 验收 \/ Verification/,
+    /## UI 质量验收 \/ UI Quality Audit/,
+    /## 视觉比较 \/ Visual Comparison/,
+    /## 成品抛光 \/ Polish/,
+    /## 证据 \/ Evidence/,
+    /## 边界 \/ Boundaries/,
+  ]) assert.match(report, heading);
+  assert.match(report, /Status: \*\*success\*\*/);
+  assert.match(report, /Model: stub/);
+  assert.match(report, /Pages: 2/);
+  assert.match(report, /Scenarios: 1/);
+  assert.match(report, /Verification checks: 2/);
+  assert.match(report, /UI audit rounds: 1/);
+  assert.match(report, /desktop.*overview-desktop-round-0\.png/is);
+  assert.match(report, /mobile.*overview-mobile-round-0\.png/is);
+  assert.match(report, /### Round 0[\s\S]*0\.5400 \/ 0\.6200/);
+  assert.match(report, /### Round 1[\s\S]*0\.7812 \/ 0\.6200/);
+  assert.match(report, /Polish status: failed/);
+  assert.match(report, /POLISH_ROLLBACK_FAILED/);
+  assert.match(report, /draft retained: true/i);
+  assert.match(report, /recovery required: true/i);
+  assert.match(report, /120 prompt.*80 completion.*4 calls/is);
+  assert.match(report, /机械 UI 完成度.*Mechanical UI completion/is);
+  assert.match(report, /粗粒度参考相似度.*Coarse reference similarity/is);
+  assert.match(report, /人工视觉检查.*Human visual inspection/is);
+  assert.doesNotMatch(report, /pixel-perfect|像素级完美/i);
+
+  assert.equal(design.available, true);
+  assert.equal(design.pages.length, 2);
+  assert.equal(design.scenarios.length, 1);
+  assert.equal(design.acceptance.length, 2);
+  assert.equal(quality.available, true);
+  assert.equal(quality.rounds.length, 1);
+  assert.equal(quality.terminal.summary.pass, true);
+  assert.equal(quality.terminal.bucket, 'quality');
+  assert.deepEqual(quality.rounds[0].evidence, ['overview-desktop-round-0.png', 'overview-mobile-round-0.png']);
+  assert.equal(polish.available, true);
+  assert.deepEqual(polish.changedFiles, ['src/App.jsx']);
+  assert.equal(polish.draft.review.pass, true);
+  assert.equal(polish.candidate.review.pass, false);
+  assert.equal(polish.failureCauseCode, 'POLISH_ROLLBACK_FAILED');
+  assert.deepEqual(polish.recovery, { draftRetained: true, recoveryRequired: true });
+
+  const publicEvidence = [report, JSON.stringify(design), JSON.stringify(quality), JSON.stringify(polish), JSON.stringify(ctx.events)].join('\n');
+  assert.doesNotMatch(publicEvidence, /private\.invalid|vibe-secret|session-secret|data:image|base64|private-image|artifact\.txt|sk-report-private|Bearer\s+sk-report-private|srv\/private\/key|server\/share\/key/i);
+  assert.deepEqual((await fs.readdir(root)).filter((name) => name.includes('.tmp-')), []);
+  await fs.rm(root, { recursive: true, force: true });
+});
+
 test('polish limits and file validation enforce exact bounded safe output', async () => {
   const {
     POLISH_LIMITS,

@@ -312,6 +312,218 @@ test('HTTP API serves jailed reference images and visual comparison history', as
   }
 });
 
+test('run store reads safe product evidence with legacy fallbacks and jailed images', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-quality-store-'));
+  const runId = 'quality-run-2026-07-13T10-00-00';
+  const legacyId = 'legacy-run-2026-07-13T09-00-00';
+  const corruptId = 'corrupt-run-2026-07-13T08-00-00';
+  const linkedRunId = 'linked-run-2026-07-13T07-00-00';
+  const runDir = path.join(root, runId);
+  const privatePath = 'D:/private/vibe-secret/artifact.png';
+  const privateCredential = 'sk-store-private-1234567890';
+  await Promise.all([
+    fs.mkdir(path.join(runDir, 'quality'), { recursive: true }),
+    fs.mkdir(path.join(runDir, 'polish', 'quality'), { recursive: true }),
+    fs.mkdir(path.join(runDir, 'polish', 'screenshots'), { recursive: true }),
+    fs.mkdir(path.join(runDir, 'polish', 'visual'), { recursive: true }),
+    fs.mkdir(path.join(root, legacyId), { recursive: true }),
+    fs.mkdir(path.join(root, corruptId), { recursive: true }),
+  ]);
+  await fs.writeFile(path.join(runDir, 'design.json'), JSON.stringify({
+    available: true,
+    summary: '客服质量工作台',
+    productDesign: {
+      productType: 'B2B SaaS',
+      tone: `Bearer ${privateCredential} cwd=/workspace/secrets.json file=//server/share/key.txt`,
+      contentStrategy: 'Error: hidden\n    at secret.js:1:1',
+    },
+    pages: [{ name: '质量概览', route: '/', purpose: '定位风险' }],
+    scenarios: [{ name: '筛选风险', route: '/' }],
+    acceptance: ['风险可下钻'],
+    secret: privatePath,
+  }));
+  await fs.writeFile(path.join(runDir, 'quality', 'summary.json'), JSON.stringify({
+    available: true,
+    rounds: [{
+      round: 0,
+      summary: { pass: false, failureCount: 1, failures: [{ code: 'HIT_TARGET_TOO_SMALL', screenshot: 'quality.png' }] },
+      results: [{ page: '质量概览', viewport: 'mobile', pass: false, screenshot: 'quality.png', actualFile: privatePath }],
+      evidence: ['quality.png'],
+    }],
+    terminal: { summary: { pass: true, failureCount: 0, failures: [] }, results: [] },
+    secret: privatePath,
+  }));
+  await fs.writeFile(path.join(runDir, 'polish', 'summary.json'), JSON.stringify({
+    available: true,
+    status: 'failed',
+    changedFiles: ['src/App.jsx'],
+    draft: { review: { pass: true, checkCount: 1, failedCount: 0, checks: [] }, evidence: ['draft.png'] },
+    candidate: { review: { pass: false, checkCount: 1, failedCount: 1, checks: [] }, evidence: ['candidate.png'] },
+    failureCauseCode: 'POLISH_ROLLBACK_FAILED',
+    recovery: { draftRetained: true, recoveryRequired: true },
+    secret: privatePath,
+  }));
+  await Promise.all([
+    fs.writeFile(path.join(runDir, 'quality', 'quality.png'), ONE_PIXEL_PNG),
+    fs.writeFile(path.join(runDir, 'polish', 'quality', 'polish-quality.webp'), ONE_PIXEL_PNG),
+    fs.writeFile(path.join(runDir, 'polish', 'screenshots', 'candidate.png'), ONE_PIXEL_PNG),
+    fs.writeFile(path.join(runDir, 'polish', 'visual', 'comparison.jpg'), ONE_PIXEL_PNG),
+    fs.writeFile(path.join(runDir, 'quality', 'notes.txt'), 'private'),
+    fs.writeFile(path.join(root, corruptId, 'design.json'), '{ private broken json'),
+  ]);
+  const link = path.join(runDir, 'quality', 'linked.png');
+  let linkCreated = true;
+  try {
+    await fs.symlink(path.join(runDir, 'quality', 'quality.png'), link, 'file');
+  } catch (error) {
+    if (error.code !== 'EPERM') throw error;
+    linkCreated = false;
+  }
+  const runLink = path.join(root, linkedRunId);
+  let directoryLinkCreated = true;
+  try {
+    await fs.symlink(runDir, runLink, 'junction');
+  } catch (error) {
+    if (error.code !== 'EPERM') throw error;
+    directoryLinkCreated = false;
+  }
+  const store = createRunStore(root);
+
+  try {
+    const [design, quality, polish, legacy] = await Promise.all([
+      store.readDesign(runId),
+      store.readQuality(runId),
+      store.readPolish(runId),
+      Promise.all([store.readDesign(legacyId), store.readQuality(legacyId), store.readPolish(legacyId)]),
+    ]);
+    assert.equal(design.available, true);
+    assert.equal(design.pages.length, 1);
+    assert.equal(quality.rounds[0].results[0].screenshotUrl, `/api/jobs/${runId}/artifacts/quality/quality.png`);
+    assert.deepEqual(quality.rounds[0].evidence, [{ file: 'quality.png', url: `/api/jobs/${runId}/artifacts/quality/quality.png` }]);
+    assert.deepEqual(polish.draft.evidence, [{ file: 'draft.png', url: `/api/jobs/${runId}/screenshots/draft.png` }]);
+    assert.deepEqual(polish.candidate.evidence, [{ file: 'candidate.png', url: `/api/jobs/${runId}/artifacts/polish-screenshots/candidate.png` }]);
+    assert.deepEqual(legacy.map((item) => item.available), [false, false, false]);
+    assert.doesNotMatch(JSON.stringify({ design, quality, polish }), /vibe-secret|actualFile|secret|sk-store-private|Bearer\s+sk-store-private|secret\.js|\n\s*at\s|workspace\/secrets|server\/share\/key/i);
+
+    for (const [bucket, name, type] of [
+      ['quality', 'quality.png', 'image/png'],
+      ['polish-quality', 'polish-quality.webp', 'image/webp'],
+      ['polish-screenshots', 'candidate.png', 'image/png'],
+      ['polish-visual', 'comparison.jpg', 'image/jpeg'],
+    ]) {
+      const artifact = await store.readEvidence(runId, bucket, name);
+      assert.equal(artifact.type, type);
+      assert.deepEqual(artifact.data, ONE_PIXEL_PNG);
+    }
+    await assert.rejects(store.readEvidence(runId, 'quality', '../design.json'), (error) => error.code === 'EVIDENCE_NAME_INVALID');
+    await assert.rejects(store.readEvidence(runId, 'quality', 'notes.txt'), (error) => error.code === 'EVIDENCE_TYPE_INVALID');
+    if (linkCreated) {
+      await assert.rejects(store.readEvidence(runId, 'quality', 'linked.png'), (error) => error.code === 'EVIDENCE_LINK_REJECTED');
+    }
+    if (directoryLinkCreated) {
+      await assert.rejects(store.readEvidence(linkedRunId, 'quality', 'quality.png'), (error) => error.code === 'EVIDENCE_LINK_REJECTED');
+      await assert.rejects(store.readDesign(linkedRunId), (error) => error.code === 'EVIDENCE_LINK_REJECTED');
+    }
+    await assert.rejects(store.readEvidence(runId, 'logs', 'events.jsonl'), (error) => error.code === 'EVIDENCE_BUCKET_INVALID');
+    await assert.rejects(store.readDesign(corruptId), (error) => (
+      error.code === 'EVIDENCE_JSON_INVALID'
+      && error.message === 'Evidence data is invalid.'
+      && !error.message.includes(root)
+    ));
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('HTTP API exposes safe design quality polish and evidence routes', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-quality-api-'));
+  const runId = 'quality-api-run-2026-07-13T11-00-00';
+  const legacyId = 'quality-api-legacy-2026-07-13T10-00-00';
+  const corruptId = 'quality-api-corrupt-2026-07-13T09-00-00';
+  const runDir = path.join(root, runId);
+  await Promise.all([
+    fs.mkdir(path.join(runDir, 'quality'), { recursive: true }),
+    fs.mkdir(path.join(runDir, 'polish', 'quality'), { recursive: true }),
+    fs.mkdir(path.join(root, legacyId), { recursive: true }),
+    fs.mkdir(path.join(root, corruptId), { recursive: true }),
+  ]);
+  await fs.writeFile(path.join(runDir, 'design.json'), JSON.stringify({
+    available: true,
+    summary: '质量工作台',
+    productDesign: { productType: 'B2B SaaS' },
+    pages: [], scenarios: [], acceptance: [],
+    privateEndpoint: 'https://private.invalid/v1',
+  }));
+  await fs.writeFile(path.join(runDir, 'quality', 'summary.json'), JSON.stringify({
+    available: true,
+    rounds: [{
+      round: 0,
+      summary: { pass: true, failureCount: 0, failures: [] },
+      results: [{ page: '质量概览', viewport: 'desktop', pass: true, screenshot: 'quality.png' }],
+      evidence: ['quality.png'],
+    }],
+    terminal: null,
+  }));
+  await fs.writeFile(path.join(runDir, 'polish', 'summary.json'), JSON.stringify({
+    available: true,
+    status: 'promoted',
+    changedFiles: ['src/App.jsx'],
+    draft: null,
+    candidate: null,
+    failureCauseCode: null,
+    recovery: { draftRetained: false, recoveryRequired: false },
+  }));
+  await fs.writeFile(path.join(runDir, 'quality', 'quality.png'), ONE_PIXEL_PNG);
+  await fs.writeFile(path.join(runDir, 'polish', 'quality', 'polish.webp'), ONE_PIXEL_PNG);
+  await fs.writeFile(path.join(runDir, 'quality', 'private.txt'), 'private');
+  await fs.writeFile(path.join(root, corruptId, 'design.json'), '{ broken private data');
+  const app = createConsoleServer({ runsRoot: root, env: {} });
+  const address = await app.listen(0);
+
+  try {
+    for (const resource of ['design', 'quality', 'polish']) {
+      const response = await fetch(`${address.url}api/jobs/${runId}/${resource}`);
+      const text = await response.text();
+      assert.equal(response.status, 200);
+      assert.match(response.headers.get('content-type'), /application\/json/);
+      assert.equal(JSON.parse(text).available, true);
+      assert.doesNotMatch(text, /private\.invalid|privateEndpoint|AppData|vibe-secret/i);
+      assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
+    }
+    const legacy = await fetch(`${address.url}api/jobs/${legacyId}/quality`);
+    assert.equal(legacy.status, 200);
+    assert.equal((await legacy.json()).available, false);
+
+    for (const [bucket, name, type] of [
+      ['quality', 'quality.png', 'image/png'],
+      ['polish-quality', 'polish.webp', 'image/webp'],
+    ]) {
+      const response = await fetch(`${address.url}api/jobs/${runId}/artifacts/${bucket}/${name}`);
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get('content-type'), type);
+      assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
+      assert.deepEqual(Buffer.from(await response.arrayBuffer()), ONE_PIXEL_PNG);
+    }
+    const traversal = await fetch(`${address.url}api/jobs/${runId}/artifacts/quality/%2e%2e%2fdesign.json`);
+    assert.equal(traversal.status, 400);
+    assert.equal((await traversal.json()).error.code, 'EVIDENCE_NAME_INVALID');
+    const unsupported = await fetch(`${address.url}api/jobs/${runId}/artifacts/quality/private.txt`);
+    assert.equal(unsupported.status, 400);
+    assert.equal((await unsupported.json()).error.code, 'EVIDENCE_TYPE_INVALID');
+
+    const corrupt = await fetch(`${address.url}api/jobs/${corruptId}/design`);
+    const corruptText = await corrupt.text();
+    assert.equal(corrupt.status, 500);
+    assert.deepEqual(JSON.parse(corruptText), {
+      error: { code: 'EVIDENCE_JSON_INVALID', message: 'Evidence data is invalid.' },
+    });
+    assert.doesNotMatch(corruptText, /broken private|quality-api-corrupt|AppData|vibe-secret/i);
+  } finally {
+    await app.close();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test('preview manager reuses one preview and stops it on replacement', async () => {
   const stopped = [];
   let calls = 0;
