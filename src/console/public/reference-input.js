@@ -34,7 +34,7 @@ export function createReferenceInputController({ input, trigger, dropzone, list,
         continue;
       }
       if (token !== generation) return;
-      files.push({ file, ...dimensions, objectUrl: URL.createObjectURL(file) });
+      files.push({ file, ...dimensions, role: inferRole(file.name), objectUrl: URL.createObjectURL(file) });
     }
     if (token !== generation) return;
     render();
@@ -53,6 +53,14 @@ export function createReferenceInputController({ input, trigger, dropzone, list,
     if (target < 0 || target >= files.length) return;
     [files[index], files[target]] = [files[target], files[index]];
     render();
+    onChange(files.length);
+  }
+
+  function storyboard() {
+    return files.map(({ file, role }, index) => ({
+      name: file.name,
+      role: role.trim() || `页面参考 ${index + 1}`,
+    }));
   }
 
   async function payload() {
@@ -82,12 +90,20 @@ export function createReferenceInputController({ input, trigger, dropzone, list,
       image.alt = `${item.file.name} 预览`;
       const copy = document.createElement('span');
       copy.textContent = `${item.file.name} · ${item.width}×${item.height} · ${(item.file.size / 1024).toFixed(1)} KiB`;
-      const up = button('上移', () => move(index, -1));
+      const role = document.createElement('input');
+      role.value = item.role || '';
+      role.placeholder = '页面角色，例如：运营总览';
+      role.setAttribute('aria-label', `${item.file.name} 页面角色`);
+      role.addEventListener('input', () => {
+        item.role = role.value;
+        onChange(files.length);
+      });
+      const up = button(`将 ${item.file.name} 前移`, () => move(index, -1));
       up.disabled = index === 0;
-      const down = button('下移', () => move(index, 1));
+      const down = button(`将 ${item.file.name} 后移`, () => move(index, 1));
       down.disabled = index === files.length - 1;
-      const del = button('移除', () => remove(index));
-      row.append(image, copy, up, down, del);
+      const del = button(`移除 ${item.file.name}`, () => remove(index));
+      row.append(image, copy, role, up, down, del);
       list.append(row);
     });
   }
@@ -125,10 +141,18 @@ export function createReferenceInputController({ input, trigger, dropzone, list,
     remove,
     move,
     payload,
+    storyboard,
     clear,
     ready: () => pending,
     count: () => files.length,
   };
+}
+
+function inferRole(name) {
+  if (/detail|详情/i.test(name)) return '详情页';
+  if (/overview|home|dashboard|总览|首页/i.test(name)) return '总览页';
+  if (/list|queue|列表|队列/i.test(name)) return '列表页';
+  return '';
 }
 
 function button(label, onClick) {

@@ -1100,7 +1100,11 @@ test('console page exposes the complete operational workflow', async () => {
 
   assert.equal(response.status, 200);
   assert.match(html, /<html lang="zh-CN">/);
-  assert.match(html, /你想做什么产品？/);
+  assert.match(html, /把想法整理成一份产品任务书/);
+  assert.match(html, /使用 SignalDesk 起点/);
+  assert.match(html, /id="product-goal"/);
+  assert.match(html, /id="target-users"/);
+  assert.match(html, /id="visual-direction"/);
   assert.match(html, /参考截图/);
   assert.match(html, /开始生成/);
   assert.match(html, /运行设置/);

@@ -35,7 +35,7 @@ test('browser console keeps the Product Lab workspace responsive and accessible'
       const rail = document.querySelector('#history-drawer').getBoundingClientRect();
       const main = document.querySelector('.product-lab').getBoundingClientRect();
       const focus = document.querySelector('#focus-workspace').getBoundingClientRect();
-      const brief = document.querySelector('#brief').getBoundingClientRect();
+      const brief = document.querySelector('#product-goal').getBoundingClientRect();
       const dropzone = document.querySelector('#reference-dropzone').getBoundingClientRect();
       return {
         historyCollapsed: document.querySelector('#history-toggle').getAttribute('aria-expanded') === 'false'
@@ -52,7 +52,7 @@ test('browser console keeps the Product Lab workspace responsive and accessible'
       historyCollapsed: true,
       railWidth: 72,
       focusCentered: true,
-      focusWidth: 1040,
+      focusWidth: 1180,
       inputAboveFold: true,
       dropzoneAboveFold: true,
       noHorizontalOverflow: true,
@@ -101,6 +101,56 @@ test('browser console keeps the Product Lab workspace responsive and accessible'
   }
 });
 
+test('browser Focus composes a Product Studio brief and ordered storyboard', { skip: !ENABLED, timeout: 60_000 }, async () => {
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-focus-')));
+  const runsRoot = path.join(root, 'runs');
+  let submittedBrief = '';
+  let submittedReferences = [];
+  const pipeline = async ({ config }) => {
+    submittedBrief = config.brief;
+    submittedReferences = config.references;
+    const runDir = path.join(runsRoot, 'focus-brief-run');
+    await fs.mkdir(path.join(runDir, 'logs'), { recursive: true });
+    await fs.writeFile(path.join(runDir, 'logs', 'events.jsonl'), '', 'utf8');
+    await fs.writeFile(path.join(runDir, 'DELIVERY_REPORT.md'), '# Delivery Report\n- Status: **planned**\n', 'utf8');
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    config.onEvent({ ts: new Date().toISOString(), type: 'plan:done', summary: 'brief ready' });
+    return {
+      runId: 'focus-brief-run',
+      runDir,
+      status: 'planned',
+    };
+  };
+  const app = createConsoleServer({ runsRoot, pipeline, env: {} });
+  const address = await app.listen(0);
+  const browser = await chromium.launch();
+
+  try {
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    await page.goto(address.url);
+    await page.getByRole('button', { name: '运行设置' }).click();
+    await page.getByLabel('会话 API Key').fill('focus-secret');
+    await page.getByRole('button', { name: '完成' }).click();
+    await page.getByLabel('产品目标').fill('发现并处置高风险会话');
+    await page.getByRole('button', { name: '使用 SignalDesk 起点' }).click();
+    await dispatchReferenceFiles(page, ['overview.png', 'detail.png']);
+    await page.getByRole('button', { name: '将 detail.png 前移' }).click();
+    await page.getByLabel('detail.png 页面角色').fill('风险会话详情');
+    await page.getByRole('button', { name: '开始生成' }).click();
+    await page.locator('#active-status').filter({ hasText: '规划完成' }).waitFor();
+
+    assert.match(submittedBrief, /产品目标.*目标用户.*核心流程.*视觉方向/s);
+    assert.match(submittedBrief, /发现并处置高风险会话/);
+    assert.match(submittedBrief, /参考图 Storyboard[\s\S]*detail\.png.*风险会话详情/);
+    assert.deepEqual(submittedReferences.map((item) => item.name), ['detail.png', 'overview.png']);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+  } finally {
+    await browser.close();
+    await app.close();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test('browser console submits a reference image and renders live evidence', { skip: !ENABLED, timeout: 60_000 }, async () => {
   const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-browser-')));
   const runsRoot = path.join(root, 'runs');
@@ -115,8 +165,10 @@ test('browser console submits a reference image and renders live evidence', { sk
   const previewAddress = previewServer.address();
   const previewUrl = `http://127.0.0.1:${previewAddress.port}/`;
 
+  let submittedBrief;
   let submittedReferences;
   const pipeline = async ({ config, planOnly }) => {
+    submittedBrief = config.brief;
     submittedReferences = config.references;
     const runId = 'console-demo-2026-07-11T08-00-00';
     const timestamp = '2026-07-11T08:00:00.000Z';
@@ -165,18 +217,16 @@ test('browser console submits a reference image and renders live evidence', { sk
     await page.getByRole('button', { name: '运行设置' }).click({ timeout: 1_000 });
     await page.getByLabel('会话 API Key').fill('stub-secret');
     await page.getByRole('button', { name: '完成' }).click();
-    await page.getByLabel('任务名称').fill('自由职业者记账产品');
-    await page.setInputFiles('#reference-input', {
-      name: 'home.png',
-      mimeType: 'image/png',
-      buffer: ONE_PIXEL_PNG,
-    });
-    await page.locator('#reference-list').filter({ hasText: 'home.png' }).waitFor({ timeout: 2_000 });
-    assert.equal(await page.getByLabel('需求描述').inputValue(), '');
+    await page.getByLabel('任务名称').fill('SignalDesk 客服质检平台');
+    await page.getByLabel('产品目标').fill('发现并处置高风险会话');
+    await page.getByRole('button', { name: '使用 SignalDesk 起点' }).click();
+    await dispatchReferenceFiles(page, ['overview.png', 'detail.png']);
+    await page.locator('#reference-list').filter({ hasText: 'detail.png' }).waitFor({ timeout: 2_000 });
+    await page.getByRole('button', { name: '将 detail.png 前移' }).click();
     await page.getByRole('button', { name: '开始生成' }).click();
     await page.locator('#active-status').filter({ hasText: '交付完成' }).waitFor();
-    assert.equal(submittedReferences.length, 1);
-    assert.equal(submittedReferences[0].name, 'home.png');
+    assert.match(submittedBrief, /产品目标[\s\S]*目标用户[\s\S]*核心流程[\s\S]*视觉方向/);
+    assert.deepEqual(submittedReferences.map((item) => item.name), ['detail.png', 'overview.png']);
     assert.match(await page.locator('#event-log').innerText(), /正在理解需求与参考图/);
     assert.equal(
       await page.locator('[data-stage="repairing"]').evaluate((element) => element.classList.contains('done')),
@@ -185,7 +235,8 @@ test('browser console submits a reference image and renders live evidence', { sk
 
     await page.getByRole('tab', { name: '参考图' }).click();
     const liveReferenceText = await page.locator('#reference-evidence').innerText();
-    assert.match(liveReferenceText, /home\.png/);
+    assert.match(liveReferenceText, /detail\.png/);
+    assert.match(liveReferenceText, /overview\.png/);
     assert.doesNotMatch(liveReferenceText, /undefined/);
 
     await page.getByRole('tab', { name: '结果截图' }).click();

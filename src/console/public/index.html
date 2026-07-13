@@ -40,22 +40,54 @@
         </header>
 
         <section id="focus-workspace" class="focus-workspace">
-          <h1>你想做什么产品？</h1>
-          <p>写下核心需求，也可以上传产品截图作为视觉参考。</p>
+          <header class="focus-heading">
+            <span>Focus · Product Brief</span>
+            <h1>把想法整理成一份产品任务书</h1>
+            <p>明确目标、用户、核心流程与视觉方向；参考截图会按 storyboard 顺序进入规划。</p>
+          </header>
           <form id="run-form" novalidate>
-            <label for="title">任务名称</label>
-            <input id="title" maxlength="80">
-            <label for="brief">需求描述</label>
-            <span id="brief-count">0 / 100,000</span>
-            <textarea id="brief" maxlength="100000"></textarea>
-            <div id="reference-dropzone">
-              <button id="reference-trigger" type="button" aria-controls="reference-input">
-                <strong>添加参考截图</strong>
-                <span>PNG、JPEG 或 WebP，最多 4 张</span>
-              </button>
+            <div class="brief-presets" aria-label="高价值起点">
+              <span>高价值起点</span>
+              <button type="button" data-preset="signaldesk">使用 SignalDesk 起点</button>
+              <button type="button" data-preset="data">使用数据产品起点</button>
+              <button type="button" data-preset="atlas">使用 AI 知识工具起点</button>
             </div>
-            <input id="reference-input" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden>
-            <ol id="reference-list" aria-label="参考截图"></ol>
+            <div class="focus-grid">
+              <section class="brief-canvas" aria-labelledby="brief-canvas-title">
+                <div class="section-kicker"><span>01</span><h2 id="brief-canvas-title">产品任务书</h2></div>
+                <label for="title">任务名称</label>
+                <input id="title" maxlength="80" placeholder="例如：SignalDesk 客服质检平台">
+                <label for="product-goal">产品目标</label>
+                <textarea id="product-goal" maxlength="2000" placeholder="用户要完成什么，最终交付是什么？"></textarea>
+                <label for="target-users">目标用户</label>
+                <textarea id="target-users" maxlength="1600" placeholder="主要角色、使用环境与信息密度"></textarea>
+                <fieldset class="core-flows">
+                  <legend>核心流程 <span>最多 3 个</span></legend>
+                  <input id="core-flow-1" aria-label="核心流程 1" maxlength="600" placeholder="1. 必须完成的用户任务">
+                  <input id="core-flow-2" aria-label="核心流程 2" maxlength="600" placeholder="2. 必须完成的用户任务">
+                  <input id="core-flow-3" aria-label="核心流程 3" maxlength="600" placeholder="3. 必须完成的用户任务">
+                </fieldset>
+                <label for="visual-direction">视觉方向</label>
+                <textarea id="visual-direction" maxlength="1600" placeholder="气质、色彩倾向、密度与参考产品"></textarea>
+                <div class="supplemental-brief">
+                  <label for="brief">需求描述 <span>补充约束（可选）</span></label>
+                  <span id="brief-count">0 / 100,000</span>
+                  <textarea id="brief" maxlength="100000" placeholder="技术边界、内容要求或其他补充"></textarea>
+                </div>
+              </section>
+              <section class="storyboard" aria-labelledby="storyboard-title">
+                <div class="section-kicker"><span>02</span><h2 id="storyboard-title">参考截图 Storyboard</h2></div>
+                <p>顺序会影响页面映射；为每张图补充它在产品中的角色。</p>
+                <div id="reference-dropzone">
+                  <button id="reference-trigger" type="button" aria-controls="reference-input">
+                    <strong>添加参考截图</strong>
+                    <span>PNG、JPEG 或 WebP，最多 4 张</span>
+                  </button>
+                </div>
+                <input id="reference-input" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden>
+                <ol id="reference-list" aria-label="参考截图"></ol>
+              </section>
+            </div>
             <p id="form-message" role="alert"></p>
             <button id="launch-run" type="submit">开始生成</button>
           </form>

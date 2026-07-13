@@ -23,6 +23,11 @@ const elements = {
   title: document.querySelector('#title'),
   brief: document.querySelector('#brief'),
   briefCount: document.querySelector('#brief-count'),
+  productGoal: document.querySelector('#product-goal'),
+  targetUsers: document.querySelector('#target-users'),
+  coreFlows: [...document.querySelectorAll('[id^="core-flow-"]')],
+  visualDirection: document.querySelector('#visual-direction'),
+  presetButtons: [...document.querySelectorAll('[data-preset]')],
   baseUrl: document.querySelector('#base-url'),
   model: document.querySelector('#model'),
   apiKey: document.querySelector('#api-key'),
@@ -81,7 +86,10 @@ const referenceInput = createReferenceInputController({
   trigger: elements.referenceTrigger,
   dropzone: elements.referenceDropzone,
   list: elements.referenceList,
-  onChange: renderStatus,
+  onChange: () => {
+    updateBriefCount();
+    renderStatus();
+  },
   showError,
 });
 
@@ -145,11 +153,13 @@ async function launchJob() {
   try {
     await saveSession();
     await referenceInput.ready();
+    const brief = composeBrief();
+    if (brief.length > 100_000) throw new Error('产品任务书不能超过 100,000 个字符。');
     const job = await api('/api/jobs', {
       method: 'POST',
       body: JSON.stringify({
         title: elements.title.value,
-        brief: elements.brief.value,
+        brief,
         references: await referenceInput.payload(),
         mode: document.querySelector('input[name="mode"]:checked').value,
         baseUrl: elements.baseUrl.value.trim(),
@@ -266,6 +276,15 @@ function bindEvents() {
     updateBriefCount();
     renderStatus();
   });
+  for (const input of [elements.productGoal, elements.targetUsers, ...elements.coreFlows, elements.visualDirection]) {
+    input.addEventListener('input', () => {
+      updateBriefCount();
+      renderStatus();
+    });
+  }
+  for (const button of elements.presetButtons) {
+    button.addEventListener('click', () => applyPreset(button.dataset.preset));
+  }
   elements.apiKey.addEventListener('input', renderStatus);
   elements.refreshEvidence.addEventListener('click', refreshSelectedJob);
   elements.launchPreview.addEventListener('click', launchPreview);
@@ -284,6 +303,8 @@ function resetComposer() {
   dispatch({ type: 'WORKSPACE_FOCUSED' });
   state.previewJobId = null;
   referenceInput.clear();
+  elements.form.reset();
+  updateBriefCount();
   clearError();
   setWorkspaceView(state.mode);
   render();
@@ -398,8 +419,60 @@ function renderStatus() {
   elements.keyHint.textContent = state.status?.hasApiKey ? '本次会话可用' : '未配置';
   const hasKey = Boolean(elements.apiKey.value.trim() || state.status?.hasApiKey);
   elements.launchRun.disabled = Boolean(active)
-    || (!elements.brief.value.trim() && !referenceInput.count())
+    || (!composeBrief().trim() && !referenceInput.count())
     || !hasKey;
+}
+
+function composeBrief() {
+  const flows = elements.coreFlows.map((input) => input.value.trim()).filter(Boolean);
+  const storyboard = referenceInput.storyboard();
+  const sections = [
+    ['产品目标', elements.productGoal.value],
+    ['目标用户', elements.targetUsers.value],
+    ['核心流程', flows.map((flow, index) => `${index + 1}. ${flow}`).join('\n')],
+    ['视觉方向', elements.visualDirection.value],
+    ['参考图 Storyboard', storyboard.map((item, index) => `${index + 1}. ${item.name} — ${item.role}`).join('\n')],
+    ['补充要求', elements.brief.value],
+  ];
+  return sections
+    .filter(([, value]) => value.trim())
+    .map(([heading, value]) => `## ${heading}\n${value.trim()}`)
+    .join('\n\n');
+}
+
+function applyPreset(name) {
+  const presets = {
+    signaldesk: {
+      title: 'SignalDesk 客服质检平台',
+      goal: '帮助客服运营团队发现、复核并处置高风险会话，交付可追踪的质检闭环。',
+      users: '客服运营主管与质检专员；桌面端高频使用，信息密度偏高。',
+      flows: ['筛选并搜索风险会话', '打开质检详情并查看证据', '分配负责人并标记复核'],
+      visual: '精密、克制、可信的数据密集型 B2B 工作台；冷灰画布、钴蓝操作色、紧凑表格与清晰状态。',
+    },
+    data: {
+      title: 'Pulseboard 数据运营平台',
+      goal: '把关键业务指标、异常变化和处置动作汇总为可执行的运营视图。',
+      users: '业务分析师与运营负责人；桌面端持续监控，信息密度紧凑。',
+      flows: ['查看指标趋势与异常', '切换维度并筛选数据', '创建并跟踪处置任务'],
+      visual: '编辑式数据产品，浅瓷色背景、石墨文字、清晰图表与克制强调色。',
+    },
+    atlas: {
+      title: 'Atlas Research 研究情报工作台',
+      goal: '让研究人员从资料检索、证据阅读到洞察沉淀形成连续工作流。',
+      users: '研究员与策略团队；需要长时间阅读、引用核对和知识整理。',
+      flows: ['搜索并筛选资料', '打开双栏阅读并切换引用', '保存洞察并整理集合'],
+      visual: '安静、理性、具有编辑感的 AI 知识工具；低饱和纸张色、清晰层级与舒适阅读密度。',
+    },
+  };
+  const preset = presets[name];
+  if (!preset) return;
+  if (!elements.title.value.trim()) elements.title.value = preset.title;
+  if (!elements.productGoal.value.trim()) elements.productGoal.value = preset.goal;
+  if (!elements.targetUsers.value.trim()) elements.targetUsers.value = preset.users;
+  elements.coreFlows.forEach((input, index) => { if (!input.value.trim()) input.value = preset.flows[index] || ''; });
+  if (!elements.visualDirection.value.trim()) elements.visualDirection.value = preset.visual;
+  updateBriefCount();
+  renderStatus();
 }
 
 function renderHistory() {
@@ -560,7 +633,7 @@ function setWorkspaceView(view) {
 }
 
 function updateBriefCount() {
-  elements.briefCount.textContent = `${elements.brief.value.length.toLocaleString()} / 100,000`;
+  elements.briefCount.textContent = `${composeBrief().length.toLocaleString()} / 100,000`;
 }
 
 function setConnection(online) {
