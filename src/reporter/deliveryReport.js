@@ -21,7 +21,7 @@ export async function writeReport(ctx, {
   qualityHistory = [],
   polish = null,
   error,
-}) {
+}, { evidenceFs = fs } = {}) {
   const design = selectDesign(spec);
   const quality = selectQuality(
     qualityHistory,
@@ -39,7 +39,7 @@ export async function writeReport(ctx, {
     { parts: ['design.json'], content: jsonContent(design) },
     { parts: ['quality', 'summary.json'], content: jsonContent(quality) },
     { parts: ['polish', 'summary.json'], content: jsonContent(polishSummary) },
-  ]);
+  ], evidenceFs);
   await ctx.logEvent('report:written', { summary: 'DELIVERY_REPORT.md' });
   return file;
 }
@@ -373,41 +373,53 @@ function join(value) {
   return Array.isArray(value) && value.length ? value.join(', ') : 'n/a';
 }
 
-async function atomicWriteJson(file, value) {
-  await atomicWrite(file, jsonContent(value));
+async function atomicWriteJson(file, value, fsOps = fs) {
+  await atomicWrite(file, jsonContent(value), fsOps);
 }
 
 function jsonContent(value) {
   return JSON.stringify(value, null, 2) + '\n';
 }
 
-async function publishEvidenceBundle(runDir, artifacts) {
-  const stageDir = path.join(runDir, '.evidence-stage-' + process.pid + '-' + randomUUID());
+async function publishEvidenceBundle(runDir, artifacts, fsOps = fs) {
+  const bundleId = randomUUID();
+  const stageDir = path.join(runDir, '.evidence-stage-' + bundleId);
+  const bundlesDir = path.join(runDir, '.evidence-bundles');
+  const bundleDir = path.join(bundlesDir, bundleId);
   const marker = path.join(runDir, EVIDENCE_BUNDLE_MARKER);
-  await atomicWriteJson(marker, { version: 1, state: 'publishing' });
+  let bundlePublished = false;
+  let markerPublished = false;
   try {
     await Promise.all(artifacts.map(({ parts, content }) => (
-      atomicWrite(path.join(stageDir, ...parts), content)
+      atomicWrite(path.join(stageDir, ...parts), content, fsOps)
     )));
-    for (const { parts } of artifacts) {
+    await fsOps.mkdir(bundlesDir, { recursive: true });
+    await fsOps.rename(stageDir, bundleDir);
+    bundlePublished = true;
+    for (const { parts, content } of artifacts) {
       const destination = path.join(runDir, ...parts);
-      await fs.mkdir(path.dirname(destination), { recursive: true });
-      await fs.rename(path.join(stageDir, ...parts), destination);
+      await atomicWrite(destination, content, fsOps);
     }
-    await atomicWriteJson(marker, { version: 1, state: 'committed' });
+    await atomicWriteJson(marker, { version: 1, bundleId }, fsOps);
+    markerPublished = true;
+  } catch (error) {
+    if (bundlePublished && !markerPublished) {
+      await fsOps.rm(bundleDir, { recursive: true, force: true }).catch(() => {});
+    }
+    throw error;
   } finally {
-    await fs.rm(stageDir, { recursive: true, force: true }).catch(() => {});
+    await fsOps.rm(stageDir, { recursive: true, force: true }).catch(() => {});
   }
 }
 
-async function atomicWrite(file, content) {
-  await fs.mkdir(path.dirname(file), { recursive: true });
+async function atomicWrite(file, content, fsOps = fs) {
+  await fsOps.mkdir(path.dirname(file), { recursive: true });
   const temporary = `${file}.tmp-${process.pid}-${randomUUID()}`;
   try {
-    await fs.writeFile(temporary, content, 'utf8');
-    await fs.rename(temporary, file);
+    await fsOps.writeFile(temporary, content, 'utf8');
+    await fsOps.rename(temporary, file);
   } catch (error) {
-    await fs.rm(temporary, { force: true }).catch(() => {});
+    await fsOps.rm(temporary, { force: true }).catch(() => {});
     throw error;
   }
 }

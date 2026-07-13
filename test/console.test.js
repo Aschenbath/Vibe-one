@@ -592,7 +592,6 @@ test('RunStore does not expose a partially published new evidence bundle', async
   const runId = 'partial-report-run-2026-07-13T13-56-00';
   const runDir = path.join(root, runId);
   await fs.mkdir(runDir, { recursive: true });
-  await fs.writeFile(path.join(runDir, 'quality'), 'blocks the quality directory');
   const ctx = {
     runId,
     runDir,
@@ -600,17 +599,24 @@ test('RunStore does not expose a partially published new evidence bundle', async
     usage: { promptTokens: 0, completionTokens: 0, calls: 0 },
     async logEvent(type, data) { this.events.push({ type, ...data }); },
   };
+  const failingFs = {
+    ...fs,
+    async rename(source, destination) {
+      if (String(destination).includes('.evidence-bundles')) {
+        const error = new Error('injected first publication failure');
+        error.code = 'EIO';
+        throw error;
+      }
+      return fs.rename(source, destination);
+    },
+  };
 
   await assert.rejects(writeReport(ctx, {
     config: { model: 'stub', stack: 'react-vite', maxRepairRounds: 1, references: [] },
     spec: { summary: 'partial evidence', pages: [], scenarios: [], acceptance: [] },
     status: 'failed', rounds: 0, finalReview: { pass: false, checks: [] },
     shots: [], scenarioResults: [], qualityHistory: [], uiQuality: null,
-  }));
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    if (await fs.stat(path.join(runDir, 'design.json')).then(() => true, () => false)) break;
-    await new Promise((resolve) => setImmediate(resolve));
-  }
+  }, { evidenceFs: failingFs }));
 
   const store = createRunStore(root);
   const [design, polish] = await Promise.all([store.readDesign(runId), store.readPolish(runId)]);
@@ -657,6 +663,140 @@ test('secure evidence read rejects an lstat-to-open file swap without leaking ra
     ));
     assert.equal(raced, true);
   } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('committed evidence reads an immutable bundle when the root mirror changes after marker read', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-bundle-race-'));
+  const runId = 'bundle-race-run-2026-07-13T14-30-00';
+  const runDir = path.join(root, runId);
+  const ctx = {
+    runId,
+    runDir,
+    events: [],
+    usage: { promptTokens: 0, completionTokens: 0, calls: 0 },
+    async logEvent(type, data) { this.events.push({ type, ...data }); },
+  };
+  await writeReport(ctx, {
+    config: { model: 'stub', stack: 'react-vite', maxRepairRounds: 1, references: [] },
+    spec: { summary: 'committed design', pages: [], scenarios: [], acceptance: [] },
+    status: 'success', rounds: 0, finalReview: { pass: true, checks: [] },
+    shots: [], scenarioResults: [], qualityHistory: [], uiQuality: null,
+  });
+
+  const marker = path.join(runDir, '.evidence-bundle.json');
+  const rootDesign = path.join(runDir, 'design.json');
+  let markerRead = false;
+  const evidenceFs = {
+    ...fs,
+    async open(file, flags) {
+      const handle = await fs.open(file, flags);
+      if (path.resolve(file) !== path.resolve(marker)) return handle;
+      return {
+        stat: (...args) => handle.stat(...args),
+        close: (...args) => handle.close(...args),
+        async readFile(...args) {
+          const content = await handle.readFile(...args);
+          markerRead = true;
+          await fs.writeFile(rootDesign, JSON.stringify({
+            available: true,
+            summary: 'NEW_UNCOMMITTED_PRIVATE',
+          }));
+          return content;
+        },
+      };
+    },
+  };
+
+  try {
+    const design = await createRunStore(root, { evidenceFs }).readDesign(runId);
+    assert.equal(markerRead, true);
+    assert.equal(design.summary, 'committed design');
+    assert.doesNotMatch(JSON.stringify(design), /NEW_UNCOMMITTED_PRIVATE/);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('failed republish keeps the previous committed evidence bundle readable', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-bundle-republish-'));
+  const runId = 'bundle-republish-run-2026-07-13T14-31-00';
+  const runDir = path.join(root, runId);
+  const ctx = {
+    runId,
+    runDir,
+    events: [],
+    usage: { promptTokens: 0, completionTokens: 0, calls: 0 },
+    async logEvent(type, data) { this.events.push({ type, ...data }); },
+  };
+  const reportInput = (summary) => ({
+    config: { model: 'stub', stack: 'react-vite', maxRepairRounds: 1, references: [] },
+    spec: { summary, pages: [], scenarios: [], acceptance: [] },
+    status: 'success', rounds: 0, finalReview: { pass: true, checks: [] },
+    shots: [], scenarioResults: [], qualityHistory: [], uiQuality: null,
+  });
+  await writeReport(ctx, reportInput('first committed design'));
+  const failingFs = {
+    ...fs,
+    async rename(source, destination) {
+      if (String(destination).includes('.evidence-bundles')) {
+        const error = new Error('injected bundle publication failure');
+        error.code = 'EIO';
+        throw error;
+      }
+      return fs.rename(source, destination);
+    },
+  };
+
+  try {
+    await assert.rejects(
+      writeReport(ctx, reportInput('second uncommitted design'), { evidenceFs: failingFs }),
+      /injected bundle publication failure/,
+    );
+    const design = await createRunStore(root).readDesign(runId);
+    assert.equal(design.available, true);
+    assert.equal(design.summary, 'first committed design');
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('secure evidence read rejects a hard-link swap that remains through the second fstat', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-evidence-hardlink-'));
+  const runId = 'evidence-hardlink-run-2026-07-13T14-32-00';
+  const runDir = path.join(root, runId);
+  const target = path.join(runDir, 'design.json');
+  const backup = path.join(runDir, 'design.safe.json');
+  const outside = path.join(root, 'outside-hardlink-secret.json');
+  await fs.mkdir(runDir, { recursive: true });
+  await fs.writeFile(target, JSON.stringify({ available: true, summary: 'safe design' }));
+  await fs.writeFile(outside, JSON.stringify({ available: true, summary: 'HARDLINK_PRIVATE' }));
+  let swapped = false;
+  const evidenceFs = {
+    ...fs,
+    async open(file, flags) {
+      if (!swapped && path.resolve(file) === path.resolve(target)) {
+        swapped = true;
+        await fs.rename(target, backup);
+        await fs.link(outside, target);
+      }
+      return fs.open(file, flags);
+    },
+  };
+
+  try {
+    await assert.rejects(
+      createRunStore(root, { evidenceFs }).readDesign(runId),
+      (error) => error.code === 'EVIDENCE_LINK_REJECTED'
+        && error.message === 'Linked evidence is not available.'
+        && !error.message.includes(root)
+        && !error.message.includes('HARDLINK_PRIVATE'),
+    );
+    assert.equal(swapped, true);
+  } finally {
+    await fs.rm(target, { force: true }).catch(() => {});
+    await fs.rename(backup, target).catch(() => {});
     await fs.rm(root, { recursive: true, force: true });
   }
 });

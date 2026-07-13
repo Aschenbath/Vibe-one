@@ -5,6 +5,7 @@ import { ConsoleError } from './errors.js';
 import { sanitizeEvidenceText } from '../reporter/deliveryReport.js';
 
 const EVIDENCE_BUNDLE_MARKER = '.evidence-bundle.json';
+const EVIDENCE_BUNDLES_DIR = '.evidence-bundles';
 
 const EVIDENCE_BUCKETS = new Map([
   ['quality', ['quality']],
@@ -56,12 +57,12 @@ export function createRunStore(runsRoot, { evidenceFs = fs } = {}) {
   }
 
   async function readReport(id) {
-    const runDir = resolveRunDir(id);
+    resolveRunDir(id);
     try {
-      if (!await evidenceBundleIsReadable(runDir, evidenceFs)) {
-        throw new ConsoleError('REPORT_NOT_FOUND', 'Delivery report not found.', 404);
-      }
-      const inspected = await readJailedFile(root, [String(id), 'DELIVERY_REPORT.md'], evidenceFs, 'utf8');
+      const prefix = await resolveEvidencePrefix(root, String(id), evidenceFs);
+      const inspected = prefix
+        ? await readJailedFile(root, [...prefix, 'DELIVERY_REPORT.md'], evidenceFs, 'utf8')
+        : null;
       if (!inspected) throw new ConsoleError('REPORT_NOT_FOUND', 'Delivery report not found.', 404);
       return inspected.data;
     } catch (error) {
@@ -240,30 +241,58 @@ async function readOptional(file) {
 }
 
 async function readCommittedOptional(runDir, fsOps, ...parts) {
-  if (!await evidenceBundleIsReadable(runDir, fsOps)) return '';
+  const root = path.dirname(runDir);
+  const prefix = await resolveEvidencePrefix(root, path.basename(runDir), fsOps);
+  if (!prefix) return '';
   const inspected = await readJailedFile(
-    path.dirname(runDir),
-    [path.basename(runDir), ...parts],
+    root,
+    [...prefix, ...parts],
     fsOps,
     'utf8',
   );
   return inspected?.data ?? '';
 }
 
-async function evidenceBundleIsReadable(runDir, fsOps) {
+async function resolveEvidencePrefix(root, runId, fsOps) {
   const inspected = await readJailedFile(
-    path.dirname(runDir),
-    [path.basename(runDir), EVIDENCE_BUNDLE_MARKER],
+    root,
+    [runId, EVIDENCE_BUNDLE_MARKER],
     fsOps,
     'utf8',
   );
-  if (!inspected) return true;
+  if (!inspected) {
+    return await jailedDirectoryExists(root, [runId, EVIDENCE_BUNDLES_DIR], fsOps)
+      ? null
+      : [runId];
+  }
   try {
     const marker = JSON.parse(inspected.data);
-    return marker?.version === 1 && marker?.state === 'committed';
+    const bundleId = String(marker?.bundleId ?? '');
+    if (marker?.version !== 1 || !/^[a-f0-9-]{36}$/i.test(bundleId)) return null;
+    return [runId, EVIDENCE_BUNDLES_DIR, bundleId];
   } catch {
-    return false;
+    return null;
   }
+}
+
+async function jailedDirectoryExists(root, parts, fsOps) {
+  const base = path.resolve(root);
+  const consumed = [];
+  let stat = null;
+  for (const part of parts) {
+    consumed.push(part);
+    const file = jailed(base, ...consumed);
+    try {
+      stat = await fsOps.lstat(file);
+    } catch (error) {
+      if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return false;
+      throw error;
+    }
+    if (stat.isSymbolicLink()) {
+      throw new ConsoleError('EVIDENCE_LINK_REJECTED', 'Linked evidence is not available.', 400);
+    }
+  }
+  return stat?.isDirectory() === true;
 }
 
 async function readEvents(file) {
@@ -336,9 +365,10 @@ function titleFromId(id) {
 }
 
 async function readSidecar(root, fsOps, ...parts) {
-  const runDir = jailed(root, String(parts[0] ?? ''));
-  if (!await evidenceBundleIsReadable(runDir, fsOps)) return null;
-  const inspected = await readJailedFile(root, parts, fsOps, 'utf8');
+  const [runId, ...artifactParts] = parts;
+  const prefix = await resolveEvidencePrefix(root, String(runId ?? ''), fsOps);
+  if (!prefix) return null;
+  const inspected = await readJailedFile(root, [...prefix, ...artifactParts], fsOps, 'utf8');
   if (!inspected) return null;
   if (!inspected.stat.isFile()) {
     throw new ConsoleError('EVIDENCE_JSON_INVALID', 'Evidence data is invalid.', 500);
@@ -393,6 +423,7 @@ async function readJailedFile(root, parts, fsOps, encoding = null) {
   try {
     const opened = await handle.stat();
     if (!opened.isFile()) return { data: null, stat: opened };
+    requireSingleLink(opened);
     let canonicalFile;
     let current;
     try {
@@ -405,15 +436,23 @@ async function readJailedFile(root, parts, fsOps, encoding = null) {
     if (!isContained(canonicalBase, canonicalFile)) {
       throw new ConsoleError('EVIDENCE_LINK_REJECTED', 'Linked evidence is not available.', 400);
     }
+    requireSingleLink(current);
     if (current.isSymbolicLink() || !sameFileIdentity(opened, current)) {
       throw evidenceChanged();
     }
     const data = encoding ? await handle.readFile({ encoding }) : await handle.readFile();
     const after = await handle.stat();
+    requireSingleLink(after);
     if (!sameStableFile(opened, after)) throw evidenceChanged();
     return { data, stat: opened };
   } finally {
     await handle.close().catch(() => {});
+  }
+}
+
+function requireSingleLink(stat) {
+  if (Number(stat.nlink) !== 1) {
+    throw new ConsoleError('EVIDENCE_LINK_REJECTED', 'Linked evidence is not available.', 400);
   }
 }
 
