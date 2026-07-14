@@ -1095,6 +1095,7 @@ test('console page exposes the complete operational workflow', async () => {
   const app = createConsoleServer({ runsRoot: path.join(root, 'runs'), env: {} });
   const address = await app.listen(0);
 
+  try {
   const response = await fetch(address.url);
   const html = await response.text();
 
@@ -1108,9 +1109,9 @@ test('console page exposes the complete operational workflow', async () => {
   assert.match(html, /参考截图/);
   assert.match(html, /开始生成/);
   assert.match(html, /运行设置/);
-  assert.match(html, /理解需求/);
-  assert.match(html, /视觉校验/);
-  assert.match(html, /交付证据/);
+  assert.match(html, /生产时间线/);
+  assert.match(html, /作品画布/);
+  assert.match(html, /质量与证据/);
   assert.match(html, /id="brief"/);
   assert.match(html, /id="launch-run"/);
   assert.match(html, /id="run-history"/);
@@ -1133,9 +1134,10 @@ test('console page exposes the complete operational workflow', async () => {
   assert.match(html, /<ol[^>]*id="reference-list"[^>]*aria-label="参考截图"[^>]*><\/ol>/);
   assert.match(html, /<ol[^>]*id="stage-track"[^>]*aria-label="生成阶段"/);
   assert.match(html, /<ol[^>]*id="event-log"[^>]*aria-live="polite"/);
-  assert.match(html, /<div class="flow-grid">/);
-  assert.match(html, /<section class="activity-panel">/);
-  assert.match(html, /<section[^>]*class="evidence-panel"/);
+  assert.match(html, /<div class="flow-grid studio-grid">/);
+  assert.match(html, /<nav[^>]*class="studio-timeline"[^>]*aria-label="生产时间线"/);
+  assert.match(html, /<main[^>]*id="product-canvas"[^>]*aria-label="作品画布"/);
+  assert.match(html, /<aside[^>]*id="inspector-panel"[^>]*aria-label="质量 Inspector"/);
   assert.match(html, /<fieldset>\s*<legend>执行方式<\/legend>/);
   assert.match(html, /<input[^>]*id="api-key"[^>]*type="password"[^>]*autocomplete="off"/);
   assert.match(html, /<div[^>]*id="toast"[^>]*role="status"[^>]*aria-live="polite"[^>]*hidden/);
@@ -1158,6 +1160,22 @@ test('console page exposes the complete operational workflow', async () => {
   assert.equal(copyResponse.status, 200);
   assert.match(await copyResponse.text(), /理解需求/);
 
-  await app.close();
-  await fs.rm(root, { recursive: true, force: true });
+  } finally {
+    await app.close();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('console serves the Product Studio renderer module', async () => {
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-renderers-')));
+  const app = createConsoleServer({ runsRoot: path.join(root, 'runs'), env: {} });
+  const address = await app.listen(0);
+  try {
+    const response = await fetch(`${address.url}studio-renderers.js`);
+    assert.equal(response.status, 200);
+    assert.match(await response.text(), /renderStudioTimeline/);
+  } finally {
+    await app.close();
+    await fs.rm(root, { recursive: true, force: true });
+  }
 });

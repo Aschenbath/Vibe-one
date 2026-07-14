@@ -1,6 +1,7 @@
 import { STATUS_COPY, ERROR_COPY, EVENT_COPY } from './copy.js';
 import { createReferenceInputController } from './reference-input.js';
 import { createStudioState, reduceStudio, deriveStudioStage } from './studio-state.js';
+import { renderStudioInspector, renderStudioTimeline } from './studio-renderers.js';
 
 let state = {
   ...createStudioState(),
@@ -11,6 +12,10 @@ let state = {
   previewJobId: null,
   toastTimer: null,
   visualRequestSequence: 0,
+  inspectorTab: 'product',
+  canvasViewport: 'desktop',
+  canvasPage: '/',
+  studioEvidence: { design: { available: false }, quality: { available: false }, polish: { available: false } },
 };
 
 function dispatch(action) {
@@ -79,6 +84,15 @@ const elements = {
   settingsDrawer: document.querySelector('#settings-drawer'),
   historyToggle: document.querySelector('#history-toggle'),
   historyPanel: document.querySelector('#history-panel'),
+  productCanvas: document.querySelector('#product-canvas'),
+  canvasPage: document.querySelector('#canvas-page'),
+  viewportButtons: [...document.querySelectorAll('.viewport-switch [data-viewport]')],
+  openPreview: document.querySelector('#open-preview'),
+  inspectorTabs: [...document.querySelectorAll('[data-inspector-tab]')],
+  inspectorPanels: [...document.querySelectorAll('[data-inspector-panel]')],
+  inspectorProduct: document.querySelector('#inspector-product'),
+  inspectorDesign: document.querySelector('#inspector-design'),
+  inspectorQuality: document.querySelector('#inspector-quality'),
 };
 
 const referenceInput = createReferenceInputController({
@@ -209,6 +223,9 @@ async function selectJob(id) {
   dispatch({ type: 'JOB_SELECTED', job });
   dispatch({ type: 'EVENTS_REPLAYED', events: job.events || [] });
   state.previewJobId = null;
+  state.canvasPage = '/';
+  state.inspectorTab = 'product';
+  state.studioEvidence = { design: { available: false }, quality: { available: false }, polish: { available: false } };
   setWorkspaceView(state.mode);
   elements.previewFrame.src = 'about:blank';
   elements.previewFrame.hidden = true;
@@ -216,6 +233,7 @@ async function selectJob(id) {
   upsertJob(job);
   render();
   loadActiveEvidence(job);
+  loadStudioEvidence(job);
   if (!job.terminal) connectEvents(id);
 }
 
@@ -228,6 +246,7 @@ async function refreshSelectedJob() {
     upsertJob(job);
     render();
     loadActiveEvidence(job);
+    loadStudioEvidence(job);
     if (state.activeEvidenceTab === 'report' && job.hasReport) await loadReport();
   } catch (error) {
     showToast(error.message);
@@ -244,6 +263,7 @@ async function launchPreview() {
     elements.previewFrame.hidden = false;
     elements.previewEmpty.hidden = true;
     state.previewJobId = state.selectedJob.id;
+    elements.openPreview.disabled = false;
   } catch (error) {
     showToast(error.message);
   } finally {
@@ -288,6 +308,11 @@ function bindEvents() {
   elements.apiKey.addEventListener('input', renderStatus);
   elements.refreshEvidence.addEventListener('click', refreshSelectedJob);
   elements.launchPreview.addEventListener('click', launchPreview);
+  elements.openPreview.addEventListener('click', () => {
+    const url = elements.previewFrame.src;
+    if (url && url !== 'about:blank') window.open(url, '_blank', 'noopener,noreferrer');
+  });
+  elements.canvasPage.addEventListener('change', () => selectCanvasPage(elements.canvasPage.value));
   elements.settingsTrigger.addEventListener('click', () => elements.settingsDrawer.showModal());
   elements.historyToggle.addEventListener('click', () => {
     const expanded = elements.historyToggle.getAttribute('aria-expanded') === 'true';
@@ -296,6 +321,8 @@ function bindEvents() {
     elements.historyToggle.textContent = expanded ? '展开历史' : '收起历史';
   });
   for (const tab of elements.tabs) tab.addEventListener('click', () => activateTab(tab.dataset.tab));
+  for (const tab of elements.inspectorTabs) tab.addEventListener('click', () => activateInspectorTab(tab.dataset.inspectorTab));
+  for (const button of elements.viewportButtons) button.addEventListener('click', () => setCanvasViewport(button.dataset.viewport));
 }
 
 function resetComposer() {
@@ -322,6 +349,52 @@ function activateTab(name) {
   if (name === 'report') loadReport();
   if (state.selectedJob && name === 'references') loadReferenceEvidence(state.selectedJob);
   if (state.selectedJob && name === 'visual') loadVisualEvidence(state.selectedJob).catch((error) => showToast(error.message));
+}
+
+function activateInspectorTab(name) {
+  state.inspectorTab = name;
+  for (const tab of elements.inspectorTabs) tab.setAttribute('aria-selected', String(tab.dataset.inspectorTab === name));
+  for (const panel of elements.inspectorPanels) panel.hidden = panel.dataset.inspectorPanel !== name;
+}
+
+function setCanvasViewport(viewport) {
+  state.canvasViewport = ['desktop', 'tablet', 'mobile'].includes(viewport) ? viewport : 'desktop';
+  elements.productCanvas.dataset.viewport = state.canvasViewport;
+  for (const button of elements.viewportButtons) button.setAttribute('aria-pressed', String(button.dataset.viewport === state.canvasViewport));
+}
+
+function selectCanvasPage(route) {
+  state.canvasPage = route || '/';
+  if (state.previewJobId !== state.selectedJob?.id || elements.previewFrame.hidden) return;
+  elements.previewFrame.src = new URL(state.canvasPage, elements.previewFrame.src).href;
+}
+
+function renderCanvasPages() {
+  if (!elements.canvasPage) return;
+  const pages = state.studioEvidence.design?.pages || [];
+  const options = pages.length ? pages : [{ name: '当前页面', route: '/' }];
+  elements.canvasPage.replaceChildren();
+  for (const page of options) {
+    const option = document.createElement('option');
+    option.value = page.route || '/';
+    option.textContent = page.name || page.route || '当前页面';
+    elements.canvasPage.append(option);
+  }
+  elements.canvasPage.value = options.some((page) => page.route === state.canvasPage) ? state.canvasPage : '/';
+}
+
+async function loadStudioEvidence(job) {
+  const id = encodeURIComponent(job.id);
+  const safe = (promise, fallback) => promise.catch(() => fallback);
+  const [design, quality, polish] = await Promise.all([
+    safe(api(`/api/jobs/${id}/design`), { available: false }),
+    safe(api(`/api/jobs/${id}/quality`), { available: false }),
+    safe(api(`/api/jobs/${id}/polish`), { available: false }),
+  ]);
+  if (state.selectedJob?.id !== job.id) return;
+  state.studioEvidence = { design, quality, polish };
+  renderCanvasPages();
+  renderEvidence();
 }
 
 function loadActiveEvidence(job) {
@@ -512,26 +585,7 @@ function renderJob() {
 }
 
 function renderStages(job) {
-  const stages = ['planning', 'building', 'verifying', 'visual', 'repairing', 'success'];
-  const activeStage = deriveStudioStage(state);
-  const reached = new Set();
-  for (const event of state.events) {
-    if (event.type.startsWith('plan:')) reached.add('planning');
-    if (event.type.startsWith('build:')) reached.add('building');
-    if (['cmd:start', 'cmd:done', 'preview:start', 'preview:ready', 'screenshot', 'scenario', 'review'].includes(event.type)) reached.add('verifying');
-    if (event.type.startsWith('visual:')) reached.add('visual');
-    if (event.type.startsWith('fix:') || event.type.startsWith('repair:')) reached.add('repairing');
-  }
-  if (job.status === 'success' || job.status === 'planned') reached.add('success');
-  const failedStage = job.status === 'failed'
-    ? (stages.includes(job.stage) ? job.stage : [...stages].reverse().find((stage) => reached.has(stage)) || 'planning')
-    : null;
-  for (const item of elements.stageTrack.querySelectorAll('li')) {
-    const stage = item.dataset.stage;
-    item.classList.toggle('active', !job.terminal && stage === activeStage);
-    item.classList.toggle('done', reached.has(stage) && stage !== failedStage);
-    item.classList.toggle('failed', stage === failedStage);
-  }
+  renderStudioTimeline(elements.stageTrack, { job, events: state.events, activeStage: deriveStudioStage(state) });
 }
 
 function renderEvents(job) {
@@ -560,6 +614,7 @@ function renderEvidence() {
   elements.shotCount.textContent = String(job?.screenshots?.length || 0);
   elements.repairCount.textContent = String(job?.repairCount || 0);
   elements.launchPreview.disabled = !job?.previewEligible;
+  elements.openPreview.disabled = state.previewJobId !== job?.id;
   elements.launchPreview.textContent = state.previewJobId === job?.id ? '重新启动预览' : '启动预览';
   elements.previewLabel.textContent = !job
     ? '选择一个成功完成的任务后，可在这里启动产品预览。'
@@ -568,6 +623,13 @@ function renderEvidence() {
       : job.terminal
         ? '当前任务没有可预览的成功构建。'
         : '构建验证通过后即可启动预览。';
+  renderStudioInspector({
+    productContainer: elements.inspectorProduct,
+    designContainer: elements.inspectorDesign,
+    qualityContainer: elements.inspectorQuality,
+    job,
+    ...state.studioEvidence,
+  });
   renderScreenshots(job);
   renderRepairs(job);
 }

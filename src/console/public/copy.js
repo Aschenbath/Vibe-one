@@ -11,4 +11,4 @@ export const ERROR_COPY = {
   JOB_ACTIVE: '已有任务正在运行，请等待它完成。',
   INTERNAL_ERROR: '本地工作台暂时无法完成请求，请查看事件记录。',
 };
-export const EVENT_COPY = { 'plan:start': '正在理解需求与参考图', 'plan:done': '产品规格已经生成', 'build:start': '正在生成产品文件', 'build:done': '产品文件生成完成', 'visual:compare': '正在比较视觉一致性', 'fix:start': '正在根据失败证据修复', 'fix:applied': '修复文件已经应用', review: '机械验收完成', 'report:written': '交付报告已经生成', fatal: '运行发生错误' };
+export const EVENT_COPY = { 'plan:start': '正在理解需求与参考图', 'plan:done': '产品规格已经生成', 'design:done': '设计规格已经批准', 'build:start': '正在生成产品初稿', 'build:done': '产品文件生成完成', 'quality:audit': '正在执行 UI 质量验收', 'visual:compare': '正在比较视觉一致性', 'polish:start': '正在抛光成品候选', 'polish:applied': '成品候选已应用', 'polish:failed': '成品候选未通过复验', 'fix:start': '正在根据失败证据修复', 'fix:applied': '修复文件已经应用', review: '机械验收完成', 'report:written': '交付报告已经生成', fatal: '运行发生错误' };

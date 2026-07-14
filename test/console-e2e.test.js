@@ -182,6 +182,17 @@ test('browser console submits a reference image and renders live evidence', { sk
     await fs.mkdir(path.join(runDir, 'logs'), { recursive: true });
     await fs.mkdir(path.join(runDir, 'screenshots'), { recursive: true });
     await fs.mkdir(path.join(runDir, 'app'), { recursive: true });
+    await fs.writeFile(path.join(runDir, 'design.json'), JSON.stringify({
+      available: true,
+      summary: 'SignalDesk 风险会话工作台',
+      pages: [
+        { name: '风险总览', route: '/', purpose: '查看风险分布' },
+        { name: '待办队列', route: '/queue', purpose: '筛选并处置会话' },
+      ],
+      scenarios: [],
+      acceptance: [],
+      productDesign: {},
+    }), 'utf8');
     for (const event of events) config.onEvent(event);
     await fs.copyFile(
       path.join(PROJECT_ROOT, 'docs', 'screenshots', 'expense-home.png'),
@@ -229,10 +240,11 @@ test('browser console submits a reference image and renders live evidence', { sk
     assert.deepEqual(submittedReferences.map((item) => item.name), ['detail.png', 'overview.png']);
     assert.match(await page.locator('#event-log').innerText(), /正在理解需求与参考图/);
     assert.equal(
-      await page.locator('[data-stage="repairing"]').evaluate((element) => element.classList.contains('done')),
+      await page.locator('[data-stage="quality"]').evaluate((element) => element.classList.contains('done')),
       false,
     );
 
+    await page.getByRole('tab', { name: '证据' }).click();
     await page.getByRole('tab', { name: '参考图' }).click();
     const liveReferenceText = await page.locator('#reference-evidence').innerText();
     assert.match(liveReferenceText, /detail\.png/);
@@ -244,8 +256,10 @@ test('browser console submits a reference image and renders live evidence', { sk
     await page.getByRole('tab', { name: '交付报告' }).click();
     await page.locator('#report-content').filter({ hasText: 'Delivery Report' }).waitFor();
     await page.getByRole('tab', { name: '实时预览' }).click();
+    await page.locator('#canvas-page').selectOption('/queue');
     await page.getByRole('button', { name: '启动预览' }).click();
     await page.frameLocator('#preview-frame').getByText('生成产品预览').waitFor();
+    assert.match(await page.locator('#preview-frame').getAttribute('src'), /\/queue$/);
 
     const bodyText = await page.locator('body').innerText();
     assert.equal(bodyText.includes('stub-secret'), false);
@@ -261,8 +275,9 @@ test('browser console submits a reference image and renders live evidence', { sk
     await mobile.locator('#flow-workspace').waitFor();
     assert.equal(await mobile.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
     assert.equal(await mobile.locator('#new-run').isVisible(), true);
-    assert.equal(await mobile.getByRole('tab', { name: '实时预览' }).isVisible(), true);
     await mobile.getByRole('button', { name: '收起历史' }).click();
+    await mobile.getByRole('tab', { name: '证据' }).click();
+    assert.equal(await mobile.getByRole('tab', { name: '实时预览' }).isVisible(), true);
     await mobile.getByRole('button', { name: '启动预览' }).click();
     await mobile.frameLocator('#preview-frame').getByText('生成产品预览').waitFor();
     await mobile.locator('#run-started').evaluate((element) => { element.textContent = '7月11日 16:00'; });
@@ -434,6 +449,14 @@ test('browser console reconstructs persisted reference and visual evidence', { s
   async function assertEvidence(page) {
     await page.getByRole('button', { name: '展开历史' }).click();
     await page.locator('#run-history .history-item').filter({ hasText: 'visual history run' }).click();
+    await page.getByRole('navigation', { name: '生产时间线' }).waitFor();
+    await page.getByRole('main', { name: '作品画布' }).waitFor();
+    await page.getByRole('complementary', { name: '质量 Inspector' }).waitFor();
+    await page.getByRole('button', { name: '手机视口' }).click();
+    assert.equal(await page.locator('#product-canvas').getAttribute('data-viewport'), 'mobile');
+    await page.getByRole('tab', { name: 'UI 质量' }).click();
+    assert.match(await page.locator('#inspector-panel').innerText(), /44px/);
+    await page.getByRole('tab', { name: '证据' }).click();
     await page.getByRole('tab', { name: '参考图' }).click();
     await page.locator('#reference-evidence img').waitFor();
     assert.match(await page.locator('#reference-evidence').innerText(), /home\.png.*1×1/);
@@ -491,6 +514,7 @@ test('browser console reconstructs persisted reference and visual evidence', { s
       });
     });
     await page.locator('#run-history .history-item').filter({ hasText: 'visual history run' }).click();
+    await page.getByRole('tab', { name: '证据' }).click();
     await page.getByRole('tab', { name: '视觉比较' }).click();
     await page.locator('#visual-comparisons').filter({ hasText: '最新响应' }).waitFor();
     await page.waitForTimeout(300);

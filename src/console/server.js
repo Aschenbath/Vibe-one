@@ -19,6 +19,7 @@ const STATIC_FILES = new Map([
   ['/copy.js', ['copy.js', 'text/javascript; charset=utf-8']],
   ['/reference-input.js', ['reference-input.js', 'text/javascript; charset=utf-8']],
   ['/studio-state.js', ['studio-state.js', 'text/javascript; charset=utf-8']],
+  ['/studio-renderers.js', ['studio-renderers.js', 'text/javascript; charset=utf-8']],
 ]);
 
 export function createConsoleServer({
