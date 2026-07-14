@@ -259,7 +259,7 @@ async function launchPreview() {
   elements.launchPreview.textContent = '正在启动…';
   try {
     const preview = await api(`/api/jobs/${encodeURIComponent(state.selectedJob.id)}/preview`, { method: 'POST' });
-    elements.previewFrame.src = preview.url;
+    elements.previewFrame.src = new URL(state.canvasPage || '/', preview.url).href;
     elements.previewFrame.hidden = false;
     elements.previewEmpty.hidden = true;
     state.previewJobId = state.selectedJob.id;

@@ -2,6 +2,7 @@
 
 ## 2026-07-14
 
+- 09:19:47 +08:00: Task 13 follow-up fixed the selected Canvas page being lost on first preview launch; choosing a mapped route now opens that route immediately without restarting the preview server. Browser E2E remains 9/9.
 - 09:07:09 +08:00: Product Studio quality redesign Task 13 completed. Flow is now a semantic three-part production workspace: an event-derived eight-stage production timeline, a dominant product canvas with desktop/tablet/mobile switching and persistent preview controls, and a quality Inspector with Product Spec, Design System, UI Quality, and Evidence views. The new `studio-renderers.js` keeps timeline/Inspector DOM rendering separate from fetch/EventSource ownership, and reads only the existing sanitized design/quality/polish APIs. Verification: console browser E2E passed 9/9 including desktop/mobile history replay, landmarks, viewport switching and evidence tabs; `console.test.js` passed 25/25; syntax and whitespace checks passed.
 
 ## 2026-07-13
