@@ -14,7 +14,7 @@ Completed and pushed on `feat/product-studio-quality`:
 - responsive mutually exclusive drawers, Escape/focus return, reduced motion and 44px targets;
 - public-safe SignalDesk and Atlas Research representative inputs.
 
-Task 16 preflight is green, but the configured OpenAI-compatible gateway returned HTTP 503 for SignalDesk, Atlas, and two later plan-only probes after every call exhausted six bounded retries. Failed runs wrote safe reports and did not create showcase evidence. Do not publish fake SignalDesk/Atlas reports or screenshots; rerun `npm run demo:signaldesk` and `npm run demo:atlas` only after a cheap plan probe succeeds.
+Task 16 preflight is green and a temporary OpenAI-compatible gateway was verified with real inference, but the representative SignalDesk runs still did not clear the delivery gate. `gpt-5.6-sol` repeatedly exceeded the 12-file / 24k-character builder contract; after builder request hardening, `gpt-5.6-luna` produced a valid four-file app but exhausted both repair rounds with three failed interactions and remaining UI failures. `gpt-5.5` then produced a valid four-file app whose six scenarios all passed through both repair rounds, but the UI audit still failed because product-level required states are currently checked as visible evidence on every page and viewport. No failed report or screenshot is published as showcase success. Before another paid run, redesign required-state evidence as executable, route-scoped checks instead of repeating the global state list across every default page snapshot; then rerun SignalDesk before Atlas.
 
 The original handoff asked Codex to capture a successful real run, prove a second demo, retain one failed-then-repaired report, and add screenshots to the repository. All four requirements now have committed evidence.
 
@@ -36,7 +36,7 @@ Both runs used `gpt-5.6-sol` through a configured OpenAI-compatible endpoint. Th
 3. Provider retries bounded network errors, 429 responses, and transient HTTP 500/502/503/504 responses.
 4. Chat completions stream by default and fall back to ordinary JSON responses when a gateway ignores streaming.
 5. Streaming uses a separate 10-minute default timeout so an active long response is not aborted by the 120-second non-streaming limit.
-6. Builder output is constrained to an MVP budget of at most 8 files and roughly 12,000 characters.
+6. Builder output retains the hard 12-file / 24,000-character contract, targets 18,000 characters and no more than six model-authored files, and passes a 6,000-token request cap when the gateway honors `max_tokens`.
 7. Planner-only runs exit with code 0 when their status is `planned`.
 8. Windows e2e tests canonicalize 8.3 temporary directory aliases before invoking Vite/Rollup.
 

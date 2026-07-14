@@ -20,6 +20,7 @@ export const BUILD_LIMITS = Object.freeze({
   maxFiles: 12,
   maxCharacters: 24_000,
 });
+export const BUILDER_MAX_TOKENS = 6_000;
 
 export const BUILDER_SYSTEM = `You are the builder of a bounded app-replication pipeline.
 Target stack: React 18 + Vite, plain CSS, mock data in src/data/.
@@ -40,7 +41,8 @@ Rules:
 - One component per planned page; implement the planned interactions with real state updates.
 - Use accessible labels/roles (real <button>, <input> with placeholder/label) so interactions are testable.
 - Hard response budget: at most 12 files and 24,000 characters total.
-- Prefer index.html, src/main.jsx, src/App.jsx, src/styles.css, and at most a few small data/helper files.
+- Target response budget: no more than 18,000 characters, leaving safety margin below the hard limit.
+- Default to exactly four model-authored files: index.html, src/main.jsx, src/App.jsx, and src/styles.css; add a small data/helper file only when essential, and never exceed six model-authored files.
 - Keep page components together in src/App.jsx when that avoids boilerplate; omit long comments and repeated CSS.
 - Define CSS variables from the approved design tokens and actually use those design tokens in components.
 - Use realistic, consistent mock data; never use lorem ipsum, Card 1, or Item A placeholders.
@@ -92,7 +94,11 @@ export async function build(ctx, provider, config, spec) {
     'Approved spec JSON:', JSON.stringify(spec, null, 2),
   ].join('\n');
 
-  const { content, usage } = await provider.chat({ system: BUILDER_SYSTEM, user });
+  const { content, usage } = await provider.chat({
+    system: BUILDER_SYSTEM,
+    user,
+    maxTokens: BUILDER_MAX_TOKENS,
+  });
   ctx.addUsage(usage);
 
   const files = validateGeneratedFiles(parseFileBlocks(content));

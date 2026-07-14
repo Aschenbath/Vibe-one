@@ -176,6 +176,8 @@ test('package test command is compatible with the Node 20 CI runner', async () =
 test('builder prompt keeps model output within the gateway-friendly MVP budget', () => {
   assert.match(BUILDER_SYSTEM, /at most 12 files/i);
   assert.match(BUILDER_SYSTEM, /24,000 characters/i);
+  assert.match(BUILDER_SYSTEM, /target response budget.*18,000 characters/i);
+  assert.match(BUILDER_SYSTEM, /default to exactly four model-authored files.*never exceed six/is);
   assert.match(BUILDER_SYSTEM, /src\/App\.jsx/);
   assert.match(BUILDER_SYSTEM, /CSS variables.*design tokens.*actually use/is);
   assert.match(BUILDER_SYSTEM, /realistic.*consistent mock data/is);
@@ -188,10 +190,11 @@ test('builder prompt keeps model output within the gateway-friendly MVP budget',
 });
 
 test('builder exposes the fixed dependency and output limit contracts', async () => {
-  const { APP_DEPENDENCIES, BUILD_LIMITS } = await import('../src/core/builder.js');
+  const { APP_DEPENDENCIES, BUILD_LIMITS, BUILDER_MAX_TOKENS } = await import('../src/core/builder.js');
 
   assert.equal(APP_DEPENDENCIES.dependencies['lucide-react'], '^0.468.0');
   assert.deepEqual(BUILD_LIMITS, { maxFiles: 12, maxCharacters: 24_000 });
+  assert.equal(BUILDER_MAX_TOKENS, 6_000);
   assert.equal(Object.isFrozen(BUILD_LIMITS), true);
   assert.equal(Object.isFrozen(APP_DEPENDENCIES), true);
   assert.equal(Object.isFrozen(APP_DEPENDENCIES.dependencies), true);
@@ -244,6 +247,7 @@ test('build rejects over-limit output before writing any model-authored file', a
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-builder-limit-order-'));
   const appDir = path.join(root, 'app');
   const events = [];
+  let requestOptions;
   const content = Array.from({ length: 13 }, (_, index) => [
     '=== FILE: src/file-' + index + '.jsx',
     'export default function File' + index + '() { return null; }',
@@ -260,7 +264,10 @@ test('build rejects over-limit output before writing any model-authored file', a
     await assert.rejects(
       build(
         ctx,
-        { chat: async () => ({ content, usage: {} }) },
+        { chat: async (options) => {
+          requestOptions = options;
+          return { content, usage: {} };
+        } },
         { brief: '构建质量运营工作台' },
         { summary: '质量运营工作台' },
       ),
@@ -272,6 +279,7 @@ test('build rejects over-limit output before writing any model-authored file', a
       (error) => error.code === 'ENOENT',
     );
     assert.equal(events.some((event) => event.type === 'build:done'), false);
+    assert.equal(requestOptions.maxTokens, 6_000);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
@@ -339,9 +347,10 @@ test('provider preserves OpenAI-compatible multimodal user content', async (t) =
     { type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' } },
   ];
 
-  await provider.chatJson({ system: 'system', user: content });
+  await provider.chatJson({ system: 'system', user: content, maxTokens: 6_000 });
 
   assert.deepEqual(requestBody.messages[1].content, content);
+  assert.equal(requestBody.max_tokens, 6_000);
 });
 
 test('provider rejects unsupported multimodal parts before sending a request', async (t) => {
