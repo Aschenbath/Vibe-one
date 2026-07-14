@@ -1,0 +1,5 @@
+{
+  "stack": "react-vite",
+  "viewport": { "width": 1440, "height": 900 },
+  "maxRepairRounds": 2
+}

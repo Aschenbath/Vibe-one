@@ -17,7 +17,7 @@ import {
 } from '../src/core/fixer.js';
 import { writeReport } from '../src/reporter/deliveryReport.js';
 import { exitCodeForStatus } from '../src/cli/status.js';
-import { createRunContext } from '../src/core/runContext.js';
+import { createRunContext, PROJECT_ROOT } from '../src/core/runContext.js';
 import { loadConfig } from '../src/core/config.js';
 import { PLANNER_SYSTEM, createPlannerUserContent, plan } from '../src/core/planner.js';
 import { runPipeline } from '../src/core/pipeline.js';
@@ -2082,4 +2082,16 @@ test('reference discovery rejects manifest paths outside the references director
 
   await assert.rejects(discoverReferenceImages(inputDir), /REFERENCE_PATH_INVALID/);
   await fs.rm(root, { recursive: true, force: true });
+});
+
+test('representative SignalDesk and Atlas inputs cover three pages and five interactions', async () => {
+  for (const name of ['signaldesk', 'atlas-research']) {
+    const inputDir = path.join(PROJECT_ROOT, 'examples', name, 'input');
+    const brief = await fs.readFile(path.join(inputDir, 'brief.md'), 'utf8');
+    assert.match(brief, /3 个页面|three pages/i);
+    assert.match(brief, /至少 5 个交互场景|at least five/i);
+    assert.doesNotMatch(brief, /lorem ipsum|Card 1|Item A/i);
+  }
+  const references = await discoverReferenceImages(path.join(PROJECT_ROOT, 'examples', 'atlas-research', 'input'));
+  assert.ok(references.length >= 2);
 });
