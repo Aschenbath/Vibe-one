@@ -151,6 +151,51 @@ test('browser Focus composes a Product Studio brief and ordered storyboard', { s
   }
 });
 
+test('browser Studio Flow keeps mobile drawers accessible and mutually exclusive', { skip: !ENABLED, timeout: 60_000 }, async () => {
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-flow-mobile-')));
+  const runsRoot = path.join(root, 'runs');
+  const pipeline = async ({ config }) => {
+    const runDir = path.join(runsRoot, 'flow-mobile-run');
+    await fs.mkdir(path.join(runDir, 'logs'), { recursive: true });
+    await fs.writeFile(path.join(runDir, 'logs', 'events.jsonl'), '', 'utf8');
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    config.onEvent({ ts: new Date().toISOString(), type: 'plan:done', summary: 'brief ready' });
+    return { runId: 'flow-mobile-run', runDir, status: 'planned' };
+  };
+  const app = createConsoleServer({ runsRoot, pipeline, env: {} });
+  const address = await app.listen(0);
+  const browser = await chromium.launch();
+
+  try {
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    await page.goto(address.url);
+    await page.getByRole('button', { name: '运行设置' }).click();
+    await page.getByLabel('会话 API Key').fill('flow-mobile-secret');
+    await page.getByRole('button', { name: '完成' }).click();
+    await page.getByLabel('产品目标').fill('移动端抽屉验收');
+    await page.getByRole('button', { name: '开始生成' }).click();
+    await page.locator('#active-status').filter({ hasText: '规划完成' }).waitFor();
+
+    await page.getByRole('button', { name: '打开生产时间线' }).click();
+    assert.equal(await page.locator('body').getAttribute('data-drawer'), 'timeline');
+    await page.getByRole('button', { name: '打开 Inspector' }).click();
+    assert.equal(await page.locator('body').getAttribute('data-drawer'), 'inspector');
+    assert.equal(await page.locator('.studio-timeline').evaluate((node) => getComputedStyle(node).transform !== 'none'), true);
+    const undersized = await page.locator('button,a,input,textarea,select').evaluateAll((els) => els.filter((el) => {
+      const rect = el.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0 && (rect.width < 44 || rect.height < 44);
+    }).map((el) => `${el.tagName}#${el.id || ''}.${el.className || ''} ${Math.round(el.getBoundingClientRect().width)}x${Math.round(el.getBoundingClientRect().height)}`));
+    assert.deepEqual(undersized, []);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    await page.keyboard.press('Escape');
+    assert.equal(await page.locator('body').getAttribute('data-drawer'), null);
+  } finally {
+    await browser.close();
+    await app.close();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test('browser console submits a reference image and renders live evidence', { skip: !ENABLED, timeout: 60_000 }, async () => {
   const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-browser-')));
   const runsRoot = path.join(root, 'runs');
@@ -276,8 +321,10 @@ test('browser console submits a reference image and renders live evidence', { sk
     assert.equal(await mobile.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
     assert.equal(await mobile.locator('#new-run').isVisible(), true);
     await mobile.getByRole('button', { name: '收起历史' }).click();
+    await mobile.getByRole('button', { name: '打开 Inspector' }).click();
     await mobile.getByRole('tab', { name: '证据' }).click();
     assert.equal(await mobile.getByRole('tab', { name: '实时预览' }).isVisible(), true);
+    await mobile.keyboard.press('Escape');
     await mobile.getByRole('button', { name: '启动预览' }).click();
     await mobile.frameLocator('#preview-frame').getByText('生成产品预览').waitFor();
     await mobile.locator('#run-started').evaluate((element) => { element.textContent = '7月11日 16:00'; });

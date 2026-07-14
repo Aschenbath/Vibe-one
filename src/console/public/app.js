@@ -17,6 +17,7 @@ let state = {
   canvasPage: '/',
   studioEvidence: { design: { available: false }, quality: { available: false }, polish: { available: false } },
 };
+let drawerReturnFocus = null;
 
 function dispatch(action) {
   state = reduceStudio(state, action);
@@ -93,6 +94,8 @@ const elements = {
   inspectorProduct: document.querySelector('#inspector-product'),
   inspectorDesign: document.querySelector('#inspector-design'),
   inspectorQuality: document.querySelector('#inspector-quality'),
+  openTimeline: document.querySelector('#open-timeline'),
+  openInspector: document.querySelector('#open-inspector'),
 };
 
 const referenceInput = createReferenceInputController({
@@ -323,6 +326,34 @@ function bindEvents() {
   for (const tab of elements.tabs) tab.addEventListener('click', () => activateTab(tab.dataset.tab));
   for (const tab of elements.inspectorTabs) tab.addEventListener('click', () => activateInspectorTab(tab.dataset.inspectorTab));
   for (const button of elements.viewportButtons) button.addEventListener('click', () => setCanvasViewport(button.dataset.viewport));
+  elements.openTimeline.addEventListener('click', () => toggleDrawer('timeline'));
+  elements.openInspector.addEventListener('click', () => toggleDrawer('inspector'));
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') closeDrawer();
+  });
+}
+
+function toggleDrawer(name) {
+  drawerReturnFocus = document.activeElement;
+  const current = document.body.dataset.drawer;
+  if (current === name) {
+    closeDrawer();
+    return;
+  }
+  const next = name;
+  if (next) document.body.dataset.drawer = next;
+  else delete document.body.dataset.drawer;
+  elements.openTimeline.setAttribute('aria-expanded', String(next === 'timeline'));
+  elements.openInspector.setAttribute('aria-expanded', String(next === 'inspector'));
+}
+
+function closeDrawer() {
+  if (!document.body.dataset.drawer) return;
+  delete document.body.dataset.drawer;
+  elements.openTimeline.setAttribute('aria-expanded', 'false');
+  elements.openInspector.setAttribute('aria-expanded', 'false');
+  drawerReturnFocus?.focus();
+  drawerReturnFocus = null;
 }
 
 function resetComposer() {
