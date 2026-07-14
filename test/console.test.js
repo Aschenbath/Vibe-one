@@ -708,6 +708,37 @@ test('secure evidence read rejects an lstat-to-open file swap without leaking ra
   }
 });
 
+test('secure evidence read accepts a zero path device id when the inode still matches', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-zero-device-'));
+  const runId = 'zero-device-run-2026-07-14T16-00-00';
+  const runDir = path.join(root, runId);
+  const target = path.join(runDir, 'design.json');
+  await fs.mkdir(runDir, { recursive: true });
+  await fs.writeFile(target, JSON.stringify({ available: true, summary: 'stable design' }));
+  const evidenceFs = {
+    ...fs,
+    async lstat(file, options) {
+      const stat = await fs.lstat(file, options);
+      if (path.resolve(file) !== path.resolve(target)) return stat;
+      return new Proxy(stat, {
+        get(value, property) {
+          if (property === 'dev') return 0;
+          const member = Reflect.get(value, property, value);
+          return typeof member === 'function' ? member.bind(value) : member;
+        },
+      });
+    },
+  };
+
+  try {
+    const design = await createRunStore(root, { evidenceFs }).readDesign(runId);
+    assert.equal(design.available, true);
+    assert.equal(design.summary, 'stable design');
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test('committed evidence reads an immutable bundle when the root mirror changes after marker read', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-bundle-race-'));
   const runId = 'bundle-race-run-2026-07-13T14-30-00';

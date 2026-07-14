@@ -481,7 +481,11 @@ function sameFileIdentity(left, right) {
   const leftIno = Number(left.ino);
   const rightIno = Number(right.ino);
   if (Number.isFinite(leftIno) && Number.isFinite(rightIno) && (leftIno !== 0 || rightIno !== 0)) {
-    return Number(left.dev) === Number(right.dev) && leftIno === rightIno;
+    const leftDev = Number(left.dev);
+    const rightDev = Number(right.dev);
+    // Windows can expose a volume id through FileHandle.stat() but dev=0 through lstat().
+    const sameDevice = leftDev === 0 || rightDev === 0 || leftDev === rightDev;
+    return sameDevice && leftIno === rightIno;
   }
   return Number(left.size) === Number(right.size)
     && Number(left.mtimeMs) === Number(right.mtimeMs)

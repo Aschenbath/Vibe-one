@@ -1,6 +1,20 @@
 # Vibe-one Handoff (Fable5 -> Codex)
 
-Status: **Product Lab visual-input phase completed on 2026-07-11**.
+Status: **Product Studio quality redesign Tasks 1–15 completed; real showcase evidence is waiting on upstream API recovery.**
+
+## Current Product Studio handoff
+
+Completed and pushed on `feat/product-studio-quality`:
+
+- executable `productDesign`, 12-file / 24k builder contract, deterministic desktop/mobile UI audit;
+- one isolated bounded polish candidate with full build/content/interaction/UI/visual re-verification;
+- immutable design/quality/polish evidence APIs and referenced raster bundles;
+- Focus structured brief + ordered storyboard;
+- Flow production timeline + persistent page/device canvas + Quality Inspector;
+- responsive mutually exclusive drawers, Escape/focus return, reduced motion and 44px targets;
+- public-safe SignalDesk and Atlas Research representative inputs.
+
+Task 16 preflight is green, but the configured OpenAI-compatible gateway returned HTTP 503 for SignalDesk, Atlas, and two later plan-only probes after every call exhausted six bounded retries. Failed runs wrote safe reports and did not create showcase evidence. Do not publish fake SignalDesk/Atlas reports or screenshots; rerun `npm run demo:signaldesk` and `npm run demo:atlas` only after a cheap plan probe succeeds.
 
 The original handoff asked Codex to capture a successful real run, prove a second demo, retain one failed-then-repaired report, and add screenshots to the repository. All four requirements now have committed evidence.
 

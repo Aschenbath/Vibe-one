@@ -24,6 +24,8 @@ test('console package command is registered', async () => {
 
 test('browser console keeps the Product Lab workspace responsive and accessible', { skip: !ENABLED, timeout: 60_000 }, async () => {
   const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-layout-')));
+  const artifacts = process.env.VIBE_ONE_CONSOLE_ARTIFACTS;
+  if (artifacts) await fs.mkdir(artifacts, { recursive: true });
   const app = createConsoleServer({ runsRoot: path.join(root, 'runs'), env: {} });
   const address = await app.listen(0);
   const browser = await chromium.launch();
@@ -57,6 +59,7 @@ test('browser console keeps the Product Lab workspace responsive and accessible'
       dropzoneAboveFold: true,
       noHorizontalOverflow: true,
     });
+    if (artifacts) await desktop.screenshot({ path: path.join(artifacts, 'product-studio-focus.png') });
 
     const mobile = await browser.newPage({ viewport: { width: 390, height: 844 } });
     await mobile.goto(address.url);
@@ -311,7 +314,7 @@ test('browser console submits a reference image and renders live evidence', { sk
     assert.equal(bodyText.includes('iVBOR'), false);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
     await page.locator('#run-started').evaluate((element) => { element.textContent = '7月11日 16:00'; });
-    await page.screenshot({ path: path.join(artifacts, 'console-desktop.png'), fullPage: true });
+    await page.screenshot({ path: path.join(artifacts, 'console-desktop.png') });
 
     const mobile = await browser.newPage({ viewport: { width: 390, height: 844 } });
     await mobile.goto(address.url);
@@ -328,7 +331,7 @@ test('browser console submits a reference image and renders live evidence', { sk
     await mobile.getByRole('button', { name: '启动预览' }).click();
     await mobile.frameLocator('#preview-frame').getByText('生成产品预览').waitFor();
     await mobile.locator('#run-started').evaluate((element) => { element.textContent = '7月11日 16:00'; });
-    await mobile.screenshot({ path: path.join(artifacts, 'console-mobile.png'), fullPage: true });
+    await mobile.screenshot({ path: path.join(artifacts, 'console-mobile.png') });
   } finally {
     await browser.close();
     await app.close();

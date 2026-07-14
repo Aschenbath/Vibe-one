@@ -2095,3 +2095,12 @@ test('representative SignalDesk and Atlas inputs cover three pages and five inte
   const references = await discoverReferenceImages(path.join(PROJECT_ROOT, 'examples', 'atlas-research', 'input'));
   assert.ok(references.length >= 2);
 });
+
+test('README presents Product Studio and representative demos Chinese-first', async () => {
+  const readme = await fs.readFile(path.join(PROJECT_ROOT, 'README.md'), 'utf8');
+  assert.ok(readme.indexOf('## 为什么做 Vibe-one') < readme.indexOf('## English Overview'));
+  assert.match(readme, /Product Studio/);
+  assert.match(readme, /SignalDesk/);
+  assert.match(readme, /Atlas Research/);
+  assert.doesNotMatch(readme, /## 主演示[\s\S]{0,600}(Expense Tracker|Notes App)/i);
+});

@@ -1,5 +1,22 @@
 # Architecture
 
+## 当前流水线 / Current Pipeline
+
+```text
+Focus brief + normalized references
+  -> Planner: productDesign + pages + scenarios + visual mapping
+  -> Builder: fixed React/Vite scaffold + bounded model files
+  -> Runner: build + preview + desktop/mobile Playwright evidence
+  -> Reviewer: content + interaction + deterministic UI audit
+  -> Visual gate: local structure/color score when references exist
+  -> bounded repair until first all-green draft
+  -> isolated single-pass polish candidate
+  -> full re-verification
+  -> immutable evidence bundle + bilingual Delivery Report
+```
+
+Product Studio keeps browser concerns separated: `studio-state.js` is the pure replay reducer, `studio-renderers.js` owns timeline/Inspector DOM rendering, and `app.js` retains fetch, EventSource, preview lifecycle, device/page selection and drawer interaction ownership.
+
 ## Data flow
 
 ```text

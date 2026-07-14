@@ -1,5 +1,22 @@
 # Vibe-one Framework
 
+## 当前产品基线
+
+Vibe-one 当前不是 CLI-only 代码生成器，而是一个本地 `Product Studio + 成品质量流水线`：
+
+- Focus 把产品目标、目标用户、核心流程、视觉方向和参考图 storyboard 合成为统一 brief。
+- Planner 输出可执行 `productDesign`、页面、场景、acceptance criteria 和可选参考图映射。
+- Builder 受 12 文件 / 约 24,000 字符、固定脚手架、依赖白名单和路径 jail 约束。
+- 桌面/移动 UI audit 检查 overflow、44px、WCAG AA、语义层级、内容和核心状态。
+- 首次全绿后只执行一次隔离 polish candidate；候选全量复验后才能提升为最终 app。
+- Flow 用生产时间线、作品画布和 Quality Inspector 回放安全的规格、质量和交付证据。
+
+当前只生成响应式 React + Vite Web 产品。远程托管、认证、多用户、并发任务、持久化凭证和无界 repair/polish 不在范围内。
+
+## English Summary
+
+Vibe-one is a bounded local AI product-delivery system. Models generate product specifications and source files; deterministic local build, interaction, UI-quality, and optional visual checks decide success. A single isolated polish candidate is promoted only after complete re-verification.
+
 ## Project Positioning
 
 Vibe-one is a hands-off app replication project for portfolio use. It is not another manually built app. Its purpose is to prove that an AI-assisted workflow can turn a target product brief or UI reference into a runnable app artifact with measurable automation, verification, repair, and delivery evidence.
