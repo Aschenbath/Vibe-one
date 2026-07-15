@@ -340,8 +340,10 @@ test('extractJson tolerates markdown fences', () => {
 
 test('provider preserves OpenAI-compatible multimodal user content', async (t) => {
   let requestBody;
+  let requestHeaders;
   t.mock.method(globalThis, 'fetch', async (_url, options) => {
     requestBody = JSON.parse(options.body);
+    requestHeaders = options.headers;
     return new Response(
       JSON.stringify({ choices: [{ message: { content: '{}' } }] }),
       { status: 200, headers: { 'content-type': 'application/json' } },
@@ -354,6 +356,7 @@ test('provider preserves OpenAI-compatible multimodal user content', async (t) =
     temperature: 0,
     streamResponses: false,
     maxNetworkRetries: 0,
+    userAgent: 'approved-client/1.0',
   });
   const content = [
     { type: 'text', text: 'Clone this UI' },
@@ -364,6 +367,7 @@ test('provider preserves OpenAI-compatible multimodal user content', async (t) =
 
   assert.deepEqual(requestBody.messages[1].content, content);
   assert.equal(requestBody.max_tokens, 6_000);
+  assert.equal(requestHeaders['user-agent'], 'approved-client/1.0');
 });
 
 test('provider rejects unsupported multimodal parts before sending a request', async (t) => {
@@ -1656,6 +1660,9 @@ export const apiToken = 'sk-polish-private-token';`,
     assert.equal(calls.length, 1);
     assert.equal(calls[0].system, POLISHER_SYSTEM);
     assert.match(POLISHER_SYSTEM, /hierarchy.*typography.*spacing.*density.*component consistency.*state presentation.*responsive/is);
+    assert.match(POLISHER_SYSTEM, /draft already passed every mechanical.*UI-quality.*state.*visual check/is);
+    assert.match(POLISHER_SYSTEM, /keep all unrelated content byte-for-byte.*never.*entire stylesheet/is);
+    assert.match(POLISHER_SYSTEM, /44px targets.*overflow.*contrast.*native-control styling.*responsive breakpoints.*required-state evidence/is);
     assert.match(POLISHER_SYSTEM, /Do not add features\/routes\/dependencies\/network\/backend/);
     assert.match(POLISHER_SYSTEM, /at most 4 files.*18,000 characters/is);
     assert.match(textPart, /Approved spec.*Product Design/is);

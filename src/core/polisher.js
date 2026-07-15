@@ -27,6 +27,14 @@ Improve only visual hierarchy, typography, spacing, density, component consisten
 state presentation, and responsive behavior. Preserve every approved feature, route,
 interaction, data shape, and state transition.
 
+The draft already passed every mechanical build, content, interaction, UI-quality,
+state, and visual check. Make the smallest incremental visual improvement possible.
+Return complete files, but keep all unrelated content byte-for-byte and never
+reformat or reorganize an entire stylesheet/component. Preserve every existing rule
+that protects 44px targets, overflow, contrast, landmarks, native-control styling,
+responsive breakpoints, and required-state evidence. Prefer one narrowly scoped
+selector or token adjustment over broad layout, typography, or reset rewrites.
+
 Do not add features/routes/dependencies/network/backend functionality.
 Available dependencies remain fixed. Never write package.json, lockfiles, Vite config,
 environment files, node_modules, or build output.

@@ -31,6 +31,7 @@ export function createProvider(config) {
           headers: {
             'content-type': 'application/json',
             authorization: `Bearer ${config.apiKey}`,
+            ...(config.userAgent ? { 'user-agent': config.userAgent } : {}),
           },
           body: JSON.stringify(body),
           signal: AbortSignal.timeout(reqTimeout),

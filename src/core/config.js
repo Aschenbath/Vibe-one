@@ -11,6 +11,7 @@ const DEFAULTS = {
   maxPolishRounds: 1,
   model: process.env.VIBE_ONE_MODEL || 'gpt-4o-mini',
   baseUrl: process.env.VIBE_ONE_BASE_URL || 'https://api.openai.com/v1',
+  userAgent: process.env.VIBE_ONE_USER_AGENT || '',
   temperature: 0.2,
   commandTimeoutMs: 5 * 60 * 1000,
   // Network resilience for flaky/shared gateways. maxNetworkRetries applies to
