@@ -2,145 +2,160 @@
 
 [![CI](https://github.com/Aschenbath/Vibe-one/actions/workflows/ci.yml/badge.svg)](https://github.com/Aschenbath/Vibe-one/actions/workflows/ci.yml)
 
-Vibe-one 是一条有明确边界的 AI 产品交付流水线：接收产品需求、参考截图或两者组合，生成结构化产品/视觉规格与可运行的 React 应用，再通过本地命令、Playwright 交互场景和确定性视觉检查完成验收，并保留有界修复的完整证据。
+Vibe-one 是一条有明确边界的 AI 产品交付流水线：把产品任务书与参考截图转成可运行的 React + Vite 产品，并用本地构建、Playwright 交互、确定性 UI audit、参考图视觉比较和一次有界 polish 决定能否交付。
 
 ```text
-需求 / 参考截图 -> 多模态规划 -> 生成应用 -> 构建与截图 -> 机械验收与视觉门禁 -> 有界修复 -> 交付报告
+产品任务书 / 参考图
+  -> 产品与设计规格
+  -> 初稿生成
+  -> 构建 + 内容 + 交互 + UI audit
+  -> 视觉门禁（有参考图时）
+  -> 有界修复至首次全绿
+  -> 单次 polish candidate + 全量复验
+  -> 不可变证据 + Delivery Report
 ```
 
-产品边界见 [`FRAMEWORK.md`](FRAMEWORK.md)，模块设计见 [`docs/architecture.md`](docs/architecture.md)。
+## 为什么做 Vibe-one
 
-## Product Lab 本地工作台
+大模型可以快速写出页面，但“代码生成完成”不等于“产品可交付”。作品集真正需要证明的是：需求如何变成可执行规格，失败如何被本地证据发现，修复如何受边界约束，最终结果为什么值得相信。
 
-启动浏览器工作台：
+Vibe-one 因此坚持三条原则：
+
+1. **模型负责生成，本地规则负责判定。** 模型不能给自己打分。
+2. **所有循环有上限。** 文件数、输出字符、修复轮次、polish 文件和图片输入都受硬限制。
+3. **每个结论有证据。** 规格、命令、截图、UI audit、视觉分数、修复与最终报告都可回放。
+
+## Product Studio
+
+浏览器工作台分为 `Focus -> Flow`：
+
+- **Focus 产品任务书**：产品目标、目标用户、最多三个核心流程、视觉方向、补充约束和有序参考图 storyboard。
+- **Flow 生产时间线**：设计规格、初稿、构建、功能验收、UI 质量、视觉验收、成品抛光和交付。
+- **作品画布**：保留最近一次可用预览，可切换页面与桌面/平板/手机视口，不重新启动任务。
+- **Quality Inspector**：集中查看产品规格、design tokens、UI failures、视觉比较、polish 和 Delivery Report。
+- **窄屏查看**：画布保持主内容，时间线与 Inspector 变为互斥抽屉；可见交互目标至少 44px。
 
 ```bash
 npm run console
 ```
 
-打开终端输出的本地回环地址。Product Lab 支持：
-
-- 纯文字需求、纯截图输入，或文字与截图组合输入；
-- PNG、JPEG、WebP，最多 4 张，单张不超过 6 MiB、总计不超过 18 MiB；
-- 单次完整任务请求最大 26 MiB；
-- 实时流水线事件、本地运行历史、参考图/结果图/视觉修复证据；
-- 在内嵌预览中启动验收通过的生成应用。
-
-![Vibe-one Product Lab 桌面工作台](docs/screenshots/console-desktop.png)
-
-浏览器不会持久化 API Key。页面中填写的 Key 只保留在当前 Node.js 进程内；未设置会话覆盖时仍可使用环境变量。公开任务对象和持久化产物不会包含凭证、上传图片的 base64、私有 endpoint 或绝对路径。HTTP 控制面默认仅监听 loopback。
-
-## 已验证演示
-
-以下两个演示均通过真实 OpenAI-compatible API 使用 `gpt-5.6-sol` 生成，再由本地机械验收完成验证，不使用模型自我打分。
-
-| 演示 | 结果 | 证据 |
-| --- | --- | --- |
-| 自由职业者记账应用 | 第 0 轮成功；3 个页面、4 个交互场景 | [交付报告](docs/demo-reports/expense-mobile.md) |
-| 笔记应用 | 第 1 轮修复后成功；2 个页面、2 个交互场景 | [修复后交付报告](docs/demo-reports/notes-mobile-repaired.md) |
-
-| 记账应用 | 笔记应用 |
+| Focus 产品任务书 | Flow 作品画布与 Inspector |
 | --- | --- |
-| ![生成的记账应用首页](docs/screenshots/expense-home.png) | ![生成的笔记列表](docs/screenshots/notes-list.png) |
-| ![生成的支出录入页](docs/screenshots/expense-add.png) | ![生成的笔记编辑页](docs/screenshots/notes-editor.png) |
+| ![Product Studio Focus](docs/screenshots/product-studio-focus.png) | ![Product Studio Flow](docs/screenshots/console-desktop.png) |
 
-笔记演示是完整的“失败后修复”案例：初始应用把规划中的占位编辑路由重定向回列表页，导致 3 项机械内容检查失败；fixer 随后修改 `src/App.jsx`，第二轮验证成功。
+工作台默认只监听 loopback。浏览器填写的 API Key 仅保留在当前 Node.js 进程内；公开任务对象和持久化证据不包含 Key、上传 base64、私有 endpoint 或绝对路径。
+
+## 成品质量流水线
+
+| 阶段 | 本地成功条件 |
+| --- | --- |
+| Planner | `productDesign`、页面、场景、acceptance criteria 和参考图映射全部通过 schema 校验 |
+| Builder | 最多 12 个模型文件、约 24,000 字符；固定脚手架与依赖白名单 |
+| Functional review | build 成功、页面文本存在、Playwright 场景全部通过 |
+| UI quality audit | 桌面/移动无横向溢出；44px 目标；WCAG AA；语义层级、内容与状态完整 |
+| Visual gate | 有参考图时执行本地结构分 + RGB 颜色分，默认阈值 `0.62` |
+| Repair | 只根据失败证据做有界完整文件修复，轮次耗尽即失败 |
+| Polish | 首次全绿后在隔离候选中最多修改 4 个文件 / 18,000 字符；全量复验后才提升 |
+| Delivery | 发布不可变 evidence bundle 与中英双语 `DELIVERY_REPORT.md` |
+
+UI audit 证明的是可复现的完成度，不假装判断“审美”；视觉分数证明的是粗粒度结构与颜色相似度，不代表像素级复刻；最终作品截图仍需人工审查。
+
+## 主演示：SignalDesk
+
+SignalDesk 是纯文字输入的 AI 客服质检与运营平台，用于证明没有参考图时也必须通过成品质量门禁。
+
+- 3 个页面：运营总览、会话队列、质检详情。
+- 6 个交互：风险筛选、搜索、清空筛选、打开详情、分配负责人、标记复核并返回。
+- 数据内容：SLA、满意度、风险会话、渠道、团队负载、规则命中、评分拆解和证据。
+- 输入：[examples/signaldesk/input/brief.md](examples/signaldesk/input/brief.md)
+
+真实 API 证据已通过质量 gate：报告见 [docs/demo-reports/signaldesk.md](docs/demo-reports/signaldesk.md)，最终页面截图如下（机械证据已通过；人工视觉复核仍是交付边界）：
+
+| 运营总览 | 会话队列 | 质检详情 |
+| --- | --- | --- |
+| ![SignalDesk overview](docs/screenshots/signaldesk-overview.png) | ![SignalDesk queue](docs/screenshots/signaldesk-queue.png) | ![SignalDesk review](docs/screenshots/signaldesk-review.png) |
+
+补充证据：移动端队列、完成复核后的真实交互结果，以及可执行的 empty 状态。
+
+| 移动端队列 | 标记已复核并返回 | 移动端 empty 状态 |
+| --- | --- | --- |
+| ![SignalDesk mobile queue](docs/screenshots/signaldesk-queue-mobile.png) | ![SignalDesk reviewed](docs/screenshots/signaldesk-reviewed.png) | ![SignalDesk mobile empty](docs/screenshots/signaldesk-empty-mobile.png) |
+
+## 主演示：Atlas Research
+
+Atlas Research 是任务书 + 两张参考图的研究情报工作台，用于证明多模态页面映射、视觉门禁和证据修复链路。
+
+- 3 个页面：资料库、双栏阅读工作区、洞察集合。
+- 6 个交互：搜索资料、打开阅读、切换引用、保存洞察、筛选集合、收藏并返回。
+- 参考图进入 planner mapping、视觉比较和 repair evidence，而不是只展示在 UI 中。
+- 输入：[examples/atlas-research/input/brief.md](examples/atlas-research/input/brief.md)
+
+Atlas 的两次真实尝试均完成 Planner/Builder，但在视觉相似度与 UI 质量 gate 上失败（`gpt-5.5` 两轮修复后仍未达标，`gpt-5.6-luna` 在第二轮触发 evidence limit）。因此没有发布 Atlas 失败报告或截图；输入与两张公开安全参考图仍已通过本地 magic-byte、尺寸和路径 jail 校验。
+
+历史上的记账与笔记真实演示仍保留用于回归和 repair 案例，但不再作为主能力证明，见 [演示归档](docs/demos/archive.md)。
+
+## 安全边界
+
+- 固定 `package.json` / Vite 配置；模型不能写 manifest、lockfile、npmrc 或配置文件。
+- 依赖固定白名单；安装使用 `npm install --ignore-scripts`。
+- 所有模型路径经过 `safeJoin`；拒绝绝对路径、遍历、链接和越界 evidence。
+- PNG/JPEG/WebP 最多 4 张，单张 6 MiB、总计 18 MiB；console 请求体最多 26 MiB。
+- Provider 对网络错误、429 和 500/502/503/504 做有界退避；耗尽后写安全失败报告。
+- 当前只生成响应式 React + Vite Web 产品；不包含远程托管、认证、多用户、并发任务或持久化凭证。
 
 ## 快速开始
 
 ```bash
 npm install
 npx playwright install chromium
+npm test
+npm run test:console:e2e
 ```
 
-CLI 直接读取当前进程的环境变量，不会把 Key 写入运行产物。浏览器工作台也支持在页面中填写仅本次会话有效的 Key。
-
-PowerShell：
+配置一个 OpenAI-compatible endpoint：
 
 ```powershell
 $env:VIBE_ONE_API_KEY = 'your-key'
 $env:VIBE_ONE_BASE_URL = 'https://your-openai-compatible-endpoint/v1'
 $env:VIBE_ONE_MODEL = 'your-model-id'
+# Optional: only when the gateway requires an approved client identifier.
+$env:VIBE_ONE_USER_AGENT = 'approved-client/1.0'
 ```
-
-POSIX Shell：
 
 ```bash
-export VIBE_ONE_API_KEY='your-key'
-export VIBE_ONE_BASE_URL='https://your-openai-compatible-endpoint/v1'
-export VIBE_ONE_MODEL='your-model-id'
+npm run demo:signaldesk
+npm run demo:atlas
+node src/cli/index.js plan examples/signaldesk
 ```
 
-运行演示或只生成规划：
+完整无 API 集成测试会执行真实 npm install/build、Vite preview、Playwright 截图、UI repair、视觉 repair 和 polish：
 
 ```bash
-npm run demo:expense
-npm run demo:notes
-node src/cli/index.js plan examples/expense-mobile
-```
-
-可选网络参数：
-
-```text
-VIBE_ONE_MAX_RETRIES=6
-VIBE_ONE_REQUEST_TIMEOUT_MS=120000
-VIBE_ONE_STREAM_TIMEOUT_MS=600000
-```
-
-Chat Completions 默认使用流式响应，避免较长的 builder 输出被中间网关提前截断；普通 JSON 响应仍作为兼容回退。
-
-## 测试
-
-```bash
-npm test
-npm run test:console:e2e
 VIBE_ONE_E2E=1 npm test
 ```
 
-- `npm test`：默认离线测试套件；
-- `npm run test:console:e2e`：使用 stub pipeline 在桌面与窄屏视口驱动浏览器工作台；
-- `VIBE_ONE_E2E=1 npm test`：执行真实 npm install/build、Vite preview、Playwright 截图、交互场景、功能修复和视觉修复，不消耗 API 配额。
-
 ## 运行产物
 
-每次真实运行写入 `runs/<target>-<timestamp>/`：
+每次运行写入 `runs/<target>-<timestamp>/`：
 
 | 产物 | 含义 |
 | --- | --- |
-| `SPEC.generated.md` / `PLAN.generated.md` | 页面规划、内容检查和交互场景 |
-| `references/manifest.json` | 脱敏后的参考图元数据；图片以文件保存，不保存 base64 |
-| `app/` | 可运行的生成应用 |
-| `logs/` | 命令输出与结构化 `events.jsonl` |
-| `screenshots/` | 页面截图和交互后截图 |
-| `visual/comparisons.json` | 各轮视觉总分、结构/颜色子分、阈值、映射和通过/失败证据 |
-| `DELIVERY_REPORT.md` | 命令、检查项、修复轮次、用量与最终状态 |
+| `SPEC.generated.md` / `PLAN.generated.md` | 产品设计、页面、场景与验证计划 |
+| `app/` / `draft/` / `polish-candidate/` | 最终应用、首次全绿初稿和隔离 polish 候选 |
+| `screenshots/` / `quality/` / `visual/` / `polish/` | 各阶段不可变图片与结构化结果 |
+| `logs/events.jsonl` | 持久化阶段事件 |
+| `DELIVERY_REPORT.md` | 双语命令、用量、失败、修复、质量与最终状态 |
 
-## 模块结构
+产品边界见 [FRAMEWORK.md](FRAMEWORK.md)，模块设计见 [docs/architecture.md](docs/architecture.md)，当前交接见 [docs/HANDOFF.md](docs/HANDOFF.md)。
 
-```text
-src/cli/        CLI 入口与状态退出码
-src/console/    本地 HTTP/SSE API、任务历史、预览生命周期与浏览器 UI
-src/core/       配置、运行上下文、pipeline、planner、builder、reviewer、fixer
-src/providers/  单一 OpenAI-compatible 流式 Chat provider
-src/runner/     命令执行、预览服务器与 Playwright 验收
-src/reporter/   DELIVERY_REPORT.md 生成
-```
+## English Overview
 
-## 设计与安全规则
+Vibe-one is a bounded AI product-delivery pipeline, not a collection of manually authored demo apps. It converts a structured brief and optional screenshots into an executable React + Vite product, then uses deterministic local evidence to decide whether the result can ship.
 
-- Reviewer 是纯机械验收：退出码、截图字节、可见文本、页面 `mustContain` 片段和端到端交互场景。
-- 存在参考图时，planner 必须为每张上传图片生成合法页面映射，否则任务在构建前失败，禁止静默忽略截图。
-- 视觉评分完全在本地执行：SSIM 派生的结构分与 RGB 直方图颜色分，不使用模型自评。
-- 默认视觉阈值为 `0.62`，表示粗粒度布局与色彩一致性，不承诺像素级复刻。
-- 只有全部 reviewer 检查通过，任务才会标记为成功。
-- 修复循环受 `maxRepairRounds` 限制，并记录每轮诊断、补丁文件、分数和不可变截图证据。
-- 模型不能覆盖 `package.json`、Vite 配置、lockfile 或 npm 配置；依赖使用白名单，安装命令带 `--ignore-scripts`。
-- 模型写入路径通过 `safeJoin` 限制在生成应用目录内。
-- 源文件使用分隔符协议传输，避免把大段代码强制塞进 JSON 转义字符串。
+Key evidence:
 
-## 当前状态与边界
-
-- **Engine：** 已支持文字、截图及组合规划、功能修复、确定性视觉比较、有界视觉修复、交付报告和完整证据链。
-- **Console：** 全中文 Product Lab 已支持参考图上传、模型配置、会话级凭证、实时事件、历史回放、参考图/结果图/视觉比较/报告/修复记录和生成应用预览。
-
-当前阶段只生成响应式 React + Vite Web 产品。本地工作台暂不包含远程托管、身份认证、并发任务、持久化凭证和命令执行中的取消；视觉门禁也不承诺像素级克隆。
+- Product Studio with a Focus brief canvas, production timeline, persistent preview canvas, and quality Inspector.
+- Schema-validated product design, bounded 12-file builder output, desktop/mobile UI audit, and optional local visual comparison.
+- One isolated polish candidate promoted only after build, content, interaction, UI, and visual re-verification.
+- Fixed scaffolding, dependency allowlist, path jail, secret-safe public APIs, immutable evidence bundles, and bounded retries.
+- Representative inputs: text-only SignalDesk and multimodal Atlas Research. Real showcase artifacts are published only after successful API runs and human screenshot review.

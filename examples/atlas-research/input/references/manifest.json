@@ -1,0 +1,16 @@
+[
+  {
+    "name": "atlas-library.png",
+    "type": "image/png",
+    "width": 390,
+    "height": 1064,
+    "bytes": 75888
+  },
+  {
+    "name": "atlas-reader.png",
+    "type": "image/png",
+    "width": 390,
+    "height": 844,
+    "bytes": 44010
+  }
+]

@@ -20,26 +20,70 @@ import { runPipeline } from '../src/core/pipeline.js';
 
 const ENABLED = process.env.VIBE_ONE_E2E === '1';
 
+const E2E_PRODUCT_DESIGN = {
+  productType: 'Operational workflow web application',
+  targetUsers: ['Operations manager', 'Quality specialist'],
+  tone: 'Dense operational workspace focused on actionable records',
+  density: 'compact',
+  navigation: 'Persistent primary navigation with page-level task context',
+  contentStrategy: 'Prioritize current status, actionable records, and verified outcomes',
+  componentLanguage: ['Metric cards', 'Structured lists', 'Clear action controls'],
+  responsiveRules: ['Stack content on narrow screens', 'Keep actions at least 44 pixels'],
+  tokens: {
+    colors: {
+      canvas: '#F4F6F8',
+      surface: '#FFFFFF',
+      text: '#17202A',
+      primary: '#2457D6',
+      success: '#16825D',
+      danger: '#C53A3A',
+    },
+    typography: {
+      display: '700 32px/1.2 Arial',
+      heading: '700 24px/1.3 Arial',
+      body: '400 16px/1.5 Arial',
+      caption: '500 14px/1.4 Arial',
+    },
+    spacing: ['4px', '8px', '12px', '16px', '24px'],
+    radii: ['4px', '8px', '12px'],
+  },
+  requiredStates: [
+    {
+      name: 'loading', trigger: 'Initial data is being prepared', route: '/',
+      steps: [], expectText: 'Loading evidence ready',
+    },
+    {
+      name: 'empty', trigger: 'No records match the active filters', route: '/',
+      steps: [], expectText: 'Empty evidence ready',
+    },
+  ],
+};
+
 const VISUAL_CSS = `*{box-sizing:border-box}
 html,body,#root{margin:0;min-height:100%;background:#fff;font-family:Arial,sans-serif;color:#111}
+.primary-nav{height:48px;padding:14px 24px;background:#fff;border-bottom:1px solid #dce3ef}
 .screen{min-height:844px;background:#fff}
 .hero{height:132px;background:#2457f5;color:#fff;padding:32px 24px}
 .hero h1{margin:0;font-size:28px}
 .card{margin:24px;padding:24px;border-radius:20px;background:#ffb547;font-size:22px;font-weight:700}
 .list{margin:24px;padding:20px;border:1px solid #dce3ef;border-radius:16px}
 .row{height:52px;border-bottom:1px solid #dce3ef;display:flex;align-items:center;justify-content:space-between}
-.row:last-child{border-bottom:0}`;
+.row:last-child{border-bottom:0}
+.state-evidence{margin:8px 24px;color:#17202a}`;
 
 const WRONG_VISUAL_CSS = `*{box-sizing:border-box}
 html,body,#root{margin:0;min-height:100%;background:#050505;font-family:Arial,sans-serif;color:#ff3344}
+.primary-nav{height:48px;padding:14px 24px;background:#050505;border-bottom:1px solid #ff3344}
 .screen{min-height:844px;background:#050505}
 .hero{height:420px;background:#050505;color:#ff3344;padding:150px 12px 12px;text-align:center}
 .hero h1{margin:0;font-size:42px}
 .card{margin:0;padding:48px 12px;border-radius:0;background:#d40020;color:#050505;font-size:30px;font-weight:700;text-align:center}
-.list{margin:0;padding:8px;border:18px solid #050505;border-radius:0;background:#d40020}
-.row{height:30px;border-bottom:4px solid #050505;display:flex;align-items:center;justify-content:space-between}`;
+.list{margin:0;padding:8px;border:18px solid #050505;border-radius:0;background:#d40020;color:#fff}
+.row{height:30px;border-bottom:4px solid #050505;display:flex;align-items:center;justify-content:space-between}
+.state-evidence{margin:8px 12px}`;
 
-const VISUAL_MARKUP = `<main class="screen">
+const VISUAL_MARKUP = `<nav class="primary-nav" aria-label="Primary">Expense workspace</nav>
+<main class="screen">
   <section class="hero"><h1>自由职业支出</h1></section>
   <section class="card">本月支出 ¥4,820</section>
   <section class="list">
@@ -47,6 +91,8 @@ const VISUAL_MARKUP = `<main class="screen">
     <div class="row"><span>交通出行</span><strong>¥320</strong></div>
     <div class="row"><span>设备采购</span><strong>¥3,300</strong></div>
   </section>
+  <section class="state-evidence" data-ui-state="loading">Loading evidence ready</section>
+  <section class="state-evidence" data-ui-state="empty">Empty evidence ready</section>
 </main>`;
 
 const VISUAL_APP = `import React from 'react';
@@ -54,7 +100,9 @@ import './styles.css';
 
 export default function App() {
   return (
-    <main className="screen">
+    <>
+      <nav className="primary-nav" aria-label="Primary">Expense workspace</nav>
+      <main className="screen">
       <section className="hero"><h1>自由职业支出</h1></section>
       <section className="card">本月支出 ¥4,820</section>
       <section className="list">
@@ -62,7 +110,10 @@ export default function App() {
         <div className="row"><span>交通出行</span><strong>¥320</strong></div>
         <div className="row"><span>设备采购</span><strong>¥3,300</strong></div>
       </section>
-    </main>
+        <section className="state-evidence" data-ui-state="loading">Loading evidence ready</section>
+        <section className="state-evidence" data-ui-state="empty">Empty evidence ready</section>
+      </main>
+    </>
   );
 }
 `;
@@ -77,6 +128,7 @@ const VISUAL_SPEC = {
     components: ['Hero', 'SummaryCard', 'ExpenseList'],
     responsive: '390px mobile reference with fluid desktop width',
   },
+  productDesign: E2E_PRODUCT_DESIGN,
   pages: [{
     name: 'Home',
     route: '/',
@@ -146,7 +198,17 @@ function createVisualProvider({ repair = false } = {}) {
       assert.equal(user.filter((part) => part.type === 'image_url').length, 1);
       return { json: VISUAL_SPEC, usage, model: 'stub-visual' };
     },
-    async chat({ user }) {
+    async chat({ system, user }) {
+      if (/single-pass UI polisher/i.test(system)) {
+        return {
+          content: fileBlocks([{
+            path: 'src/styles.css',
+            content: `${VISUAL_CSS}\n/* polish verified */`,
+          }]),
+          usage,
+          model: 'stub-visual',
+        };
+      }
       chatCalls += 1;
       if (chatCalls === 1) {
         return {
@@ -206,10 +268,12 @@ export default function App() {
   const [items, setItems] = useState(SEED);
   const total = items.reduce((s, i) => s + i.amount, 0);
   return (
-    <main style={{ fontFamily: 'sans-serif', padding: 16 }}>
+    <>
+      <nav aria-label="Primary" style={{ padding: 16, borderBottom: '1px solid #d8dde5' }}>Expense workspace</nav>
+      <main style={{ fontFamily: 'sans-serif', padding: 16 }}>
       <h1>Expenses</h1>
       <p>Total: ¥{total}</p>
-      <button onClick={() => setItems((prev) => [...prev, { id: Date.now(), note: 'New item', amount: 10 }])}>
+      <button data-ui-native-styled style={{ minWidth: 44, height: 44, borderRadius: 6 }} onClick={() => setItems((prev) => [...prev, { id: Date.now(), note: 'New item', amount: 10 }])}>
         Add
       </button>
       <ul>
@@ -217,7 +281,10 @@ export default function App() {
           <li key={i.id}>{i.note} — ¥{i.amount}</li>
         ))}
       </ul>
-    </main>
+        <section data-ui-state="loading">Loading evidence ready</section>
+        <section data-ui-state="empty">Empty evidence ready</section>
+      </main>
+    </>
   );
 }
 `,
@@ -226,6 +293,7 @@ export default function App() {
 
 const SPEC = {
   summary: 'Minimal expense tracker for pipeline integration testing.',
+  productDesign: E2E_PRODUCT_DESIGN,
   pages: [{ name: 'Home', route: '/', purpose: 'list + total', mustContain: ['Expenses', 'Total'] }],
   components: [{ name: 'App', usedBy: 'Home' }],
   dataModel: [{ entity: 'Expense', fields: ['id', 'note', 'amount'] }],
@@ -240,10 +308,21 @@ const SPEC = {
 // uses chat and expects the delimiter file protocol. Deterministic, no network.
 function createStubProvider() {
   const usage = { prompt_tokens: 10, completion_tokens: 20 };
-  const fileBlocks = APP_FILES.map((f) => `=== FILE: ${f.path}\n${f.content}=== END ===`).join('\n');
+  const buildContent = APP_FILES.map((f) => `=== FILE: ${f.path}\n${f.content}=== END ===`).join('\n');
   return {
-    async chat() {
-      return { content: fileBlocks, usage, model: 'stub' };
+    async chat({ system }) {
+      if (/single-pass UI polisher/i.test(system)) {
+        const app = APP_FILES.find((file) => file.path === 'src/App.jsx');
+        return {
+          content: fileBlocks([{
+            ...app,
+            content: app.content.replace('<main style=', `<main data-polish-marker='verified' style=`),
+          }]),
+          usage,
+          model: 'stub',
+        };
+      }
+      return { content: buildContent, usage, model: 'stub' };
     },
     async chatJson() {
       return { json: SPEC, usage, model: 'stub' };
@@ -251,8 +330,38 @@ function createStubProvider() {
   };
 }
 
+function createPolishLifecycleProvider({ breakInteraction = false } = {}) {
+  const usage = { prompt_tokens: 10, completion_tokens: 20 };
+  const observed = { buildCalls: 0, polishCalls: 0, polishImages: 0, polishText: '' };
+  const draftApp = APP_FILES.find((file) => file.path === 'src/App.jsx').content;
+  const polishedApp = breakInteraction
+    ? draftApp.replace(`note: 'New item'`, `note: 'Broken item'`)
+    : draftApp.replace('<main style=', `<main data-polish-marker='verified' style=`);
+  return {
+    observed,
+    async chatJson() {
+      return { json: SPEC, usage, model: 'stub-polish-lifecycle' };
+    },
+    async chat({ system, user }) {
+      if (/single-pass UI polisher/i.test(system)) {
+        observed.polishCalls += 1;
+        observed.polishImages = user.filter((part) => part.type === 'image_url').length;
+        observed.polishText = user.find((part) => part.type === 'text')?.text ?? '';
+        return {
+          content: `=== FILE: src/App.jsx\n${polishedApp}\n=== END ===`,
+          usage,
+          model: 'stub-polish-lifecycle',
+        };
+      }
+      observed.buildCalls += 1;
+      return { content: fileBlocks(APP_FILES), usage, model: 'stub-polish-lifecycle' };
+    },
+  };
+}
+
 const NOTES_SPEC = {
   summary: 'Minimal notes app used to prove a failed build can be repaired.',
+  productDesign: E2E_PRODUCT_DESIGN,
   pages: [{ name: 'Notes', route: '/', purpose: 'list notes', mustContain: ['Notes', 'Project brief'] }],
   components: [{ name: 'App', usedBy: 'Notes' }],
   dataModel: [{ entity: 'Note', fields: ['id', 'title'] }],
@@ -292,9 +401,12 @@ export default function App() {
   const [notes, setNotes] = useState(['Project brief']);
   return (
     <main style={{ fontFamily: 'sans-serif', padding: 16 }}>
+      <nav aria-label="Primary">Notes workspace</nav>
       <h1>Notes</h1>
-      <button onClick={() => setNotes((items) => [...items, 'New note'])}>Add note</button>
+      <button data-ui-native-styled style={{ minWidth: 44, height: 44, borderRadius: 6 }} onClick={() => setNotes((items) => [...items, 'New note'])}>Add note</button>
       <ul>{notes.map((note) => <li key={note}>{note}</li>)}</ul>
+      <section data-ui-state="loading">Loading evidence ready</section>
+      <section data-ui-state="empty">Empty evidence ready</section>
     </main>
   );
 `;
@@ -308,7 +420,14 @@ function createRepairingNotesProvider() {
     async chatJson() {
       return { json: NOTES_SPEC, usage, model: 'stub-repair' };
     },
-    async chat() {
+    async chat({ system }) {
+      if (/single-pass UI polisher/i.test(system)) {
+        return {
+          content: `=== FILE: src/App.jsx\n${FIXED_NOTES_APP}// polish verified\n=== END ===`,
+          usage,
+          model: 'stub-repair',
+        };
+      }
       chatCalls += 1;
       if (chatCalls === 1) {
         const files = [...NOTES_SHARED_FILES, { path: 'src/App.jsx', content: BROKEN_NOTES_APP }];
@@ -326,6 +445,407 @@ ${FIXED_NOTES_APP}=== END ===`,
     },
   };
 }
+
+const UI_REPAIR_SPEC = {
+  summary: 'UI quality repair fixture with a functional action.',
+  productDesign: E2E_PRODUCT_DESIGN,
+  pages: [{
+    name: 'Overview',
+    route: '/',
+    purpose: 'Show records and add one',
+    mustContain: ['Quality overview', 'Seed record'],
+  }],
+  components: [{ name: 'Overview', usedBy: 'Overview' }],
+  dataModel: [{ entity: 'Record', fields: ['label'] }],
+  interactions: ['click Add record appends a record'],
+  acceptance: ['Seed record is visible', 'Add record remains functional'],
+  scenarios: [{
+    name: 'add record remains functional',
+    route: '/',
+    steps: [{ action: 'click', target: 'Add record' }],
+    expectText: 'New record',
+  }],
+};
+
+const UI_REPAIR_APP = `import React, { useState } from 'react';
+import './styles.css';
+
+export default function App() {
+  const [records, setRecords] = useState(['Seed record']);
+  return (
+    <>
+      <nav aria-label="Primary">Quality workspace</nav>
+      <main>
+        <h1>Quality overview</h1>
+        <button data-ui-native-styled onClick={() => setRecords((items) => [...items, 'New record'])}>Add record</button>
+        <ul>{records.map((record) => <li key={record}>{record}</li>)}</ul>
+        <section data-ui-state="loading">Loading evidence ready</section>
+        <section data-ui-state="empty">Empty evidence ready</section>
+      </main>
+    </>
+  );
+}
+`;
+
+function uiRepairCss(size) {
+  return `*{box-sizing:border-box}
+html,body,#root{margin:0;min-height:100%;background:#fff;color:#17202a;font:16px Arial,sans-serif}
+nav{height:48px;padding:14px 20px;border-bottom:1px solid #d8dde5}
+main{min-height:500px;padding:24px}
+button{width:${size}px;height:${size}px;border:1px solid #173f9e;border-radius:6px;background:#2457d6;color:#fff}
+section{margin-top:12px}`;
+}
+
+function uiRepairFiles(size) {
+  return [
+    {
+      path: 'index.html',
+      content: '<!doctype html><html><head><meta charset=UTF-8></head><body><div id=root></div><script type=module src=/src/main.jsx></script></body></html>',
+    },
+    {
+      path: 'src/main.jsx',
+      content: "import React from 'react';\nimport { createRoot } from 'react-dom/client';\nimport App from './App.jsx';\ncreateRoot(document.getElementById('root')).render(<App />);\n",
+    },
+    { path: 'src/App.jsx', content: UI_REPAIR_APP },
+    { path: 'src/styles.css', content: uiRepairCss(size) },
+  ];
+}
+
+function createUiRepairProvider() {
+  const usage = { prompt_tokens: 10, completion_tokens: 20 };
+  let chatCalls = 0;
+  const observed = { promptText: '', imageCount: 0 };
+  return {
+    observed,
+    async chatJson() {
+      return { json: UI_REPAIR_SPEC, usage, model: 'stub-ui-repair' };
+    },
+    async chat({ system, user }) {
+      if (/single-pass UI polisher/i.test(system)) {
+        return {
+          content: fileBlocks([{
+            path: 'src/styles.css',
+            content: `${uiRepairCss(44)}\n/* polish verified */`,
+          }]),
+          usage,
+          model: 'stub-ui-repair',
+        };
+      }
+      chatCalls += 1;
+      if (chatCalls === 1) {
+        return {
+          content: fileBlocks(uiRepairFiles(32)),
+          usage,
+          model: 'stub-ui-repair',
+        };
+      }
+      observed.promptText = user
+        .filter((part) => part.type === 'text')
+        .map((part) => part.text)
+        .join('\n');
+      observed.imageCount = user.filter((part) => part.type === 'image_url').length;
+      return {
+        content: `=== DIAGNOSIS ===
+Raised the Add record control to the required 44 pixel target.
+=== FILE: src/styles.css
+${uiRepairCss(44)}
+=== END ===`,
+        usage,
+        model: 'stub-ui-repair',
+      };
+    },
+  };
+}
+
+test('green draft is polished, fully reverified, and promoted before delivery', { skip: !ENABLED, timeout: 300_000 }, async () => {
+  const tmpRoot = await fs.realpath(
+    await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-one-polish-success-')),
+  );
+  const targetDir = path.join(tmpRoot, 'target');
+  const brief = '# Expenses\nList expenses with a total and an Add button.\n';
+  await fs.mkdir(path.join(targetDir, 'input'), { recursive: true });
+  await fs.writeFile(path.join(targetDir, 'input', 'brief.md'), brief);
+  const provider = createPolishLifecycleProvider();
+  const config = {
+    stack: 'react-vite',
+    viewport: { width: 390, height: 844 },
+    maxRepairRounds: 0,
+    maxPolishRounds: 1,
+    model: 'stub-polish-lifecycle',
+    baseUrl: 'http://stub.local/v1',
+    temperature: 0.2,
+    brief,
+    references: [],
+    visualThreshold: 0.62,
+    runsRoot: path.join(tmpRoot, 'runs'),
+  };
+  try {
+    const result = await runPipeline({ targetDir, config, provider });
+    assert.equal(result.status, 'success');
+    assert.equal(result.errorCode, undefined);
+    assert.equal(provider.observed.buildCalls, 1);
+    assert.equal(provider.observed.polishCalls, 1);
+    assert.equal(
+      provider.observed.polishImages,
+      2 + E2E_PRODUCT_DESIGN.requiredStates.length * 2,
+    );
+    assert.match(provider.observed.polishText, /UI audit summary|Structured UI audit summary/i);
+    assert.deepEqual(result.polish.changedFiles, ['src/App.jsx']);
+    assert.equal(result.polish.status, 'promoted');
+    assert.equal(result.polish.draftReview.pass, true);
+    assert.equal(result.polish.candidateReview.pass, true);
+
+    const finalApp = await fs.readFile(path.join(result.runDir, 'app', 'src', 'App.jsx'), 'utf8');
+    const draftApp = await fs.readFile(
+      path.join(result.runDir, 'polish', 'draft-app', 'src', 'App.jsx'),
+      'utf8',
+    );
+    assert.match(finalApp, /data-polish-marker='verified'/);
+    assert.doesNotMatch(draftApp, /data-polish-marker/);
+    await assert.rejects(
+      fs.stat(path.join(result.runDir, 'polish', 'candidate')),
+      { code: 'ENOENT' },
+    );
+
+    const [draftQuality, polishQuality, polishVisual] = await Promise.all([
+      fs.readFile(path.join(result.runDir, 'quality', 'history.json'), 'utf8'),
+      fs.readFile(path.join(result.runDir, 'polish', 'quality', 'history.json'), 'utf8'),
+      fs.readFile(path.join(result.runDir, 'polish', 'visual', 'comparisons.json'), 'utf8'),
+    ]);
+    assert.equal(JSON.parse(draftQuality).length, 1);
+    assert.equal(JSON.parse(polishQuality).length, 1);
+    assert.equal(JSON.parse(polishVisual).length, 1);
+
+    const eventsText = await fs.readFile(
+      path.join(result.runDir, 'logs', 'events.jsonl'),
+      'utf8',
+    );
+    const events = eventsText.trim().split('\n').map((line) => JSON.parse(line));
+    const firstReview = events.findIndex((event) => event.type === 'review');
+    const polishStart = events.findIndex((event) => event.type === 'polish:start');
+    const polishApplied = events.findIndex((event) => event.type === 'polish:applied');
+    const secondReview = events.findIndex(
+      (event, index) => index > polishApplied && event.type === 'review',
+    );
+    const reportWritten = events.findIndex((event) => event.type === 'report:written');
+    assert.ok(firstReview >= 0 && firstReview < polishStart);
+    assert.ok(polishStart < polishApplied && polishApplied < secondReview);
+    assert.ok(secondReview < reportWritten);
+    assert.equal(events.filter((event) => event.type === 'review').length, 2);
+    assert.equal(events.some((event) => event.type === 'polish:failed'), false);
+  } finally {
+    await fs.rm(tmpRoot, { recursive: true, force: true });
+  }
+});
+
+test('failed polish verification keeps the working draft and returns POLISH_FAILED', { skip: !ENABLED, timeout: 300_000 }, async () => {
+  const tmpRoot = await fs.realpath(
+    await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-one-polish-failed-')),
+  );
+  const targetDir = path.join(tmpRoot, 'target');
+  const brief = '# Expenses\nList expenses with a total and an Add button.\n';
+  await fs.mkdir(path.join(targetDir, 'input'), { recursive: true });
+  await fs.writeFile(path.join(targetDir, 'input', 'brief.md'), brief);
+  const provider = createPolishLifecycleProvider({ breakInteraction: true });
+  const config = {
+    stack: 'react-vite',
+    viewport: { width: 390, height: 844 },
+    maxRepairRounds: 1,
+    maxPolishRounds: 1,
+    model: 'stub-polish-failed',
+    baseUrl: 'https://private.invalid/v1',
+    temperature: 0.2,
+    brief,
+    references: [],
+    visualThreshold: 0.62,
+    runsRoot: path.join(tmpRoot, 'runs'),
+  };
+  try {
+    const result = await runPipeline({ targetDir, config, provider });
+    assert.equal(result.status, 'failed');
+    assert.equal(result.errorCode, 'POLISH_FAILED');
+    assert.equal(provider.observed.buildCalls, 1);
+    assert.equal(provider.observed.polishCalls, 1);
+    assert.equal(result.polish.status, 'failed');
+    assert.deepEqual(result.polish.changedFiles, ['src/App.jsx']);
+    assert.equal(result.polish.draftReview.pass, true);
+    assert.equal(result.polish.candidateReview.pass, false);
+    assert.equal(result.finalReview.pass, false);
+    assert.equal(result.uiQuality.summary.pass, true);
+    assert.equal(result.scenarioResults[0].pass, false);
+    assert.match(
+      result.finalReview.failed.map((check) => check.name).join(' '),
+      /scenario/i,
+    );
+    assert.equal(result.polish.draftEvidence.review.pass, true);
+
+    const original = await fs.readFile(path.join(result.runDir, 'app', 'src', 'App.jsx'), 'utf8');
+    const candidate = await fs.readFile(
+      path.join(result.runDir, 'polish', 'candidate', 'src', 'App.jsx'),
+      'utf8',
+    );
+    assert.match(original, /note: 'New item'/);
+    assert.doesNotMatch(original, /Broken item/);
+    assert.match(candidate, /Broken item/);
+    await assert.rejects(
+      fs.stat(path.join(result.runDir, 'polish', 'draft-app')),
+      { code: 'ENOENT' },
+    );
+
+    const eventsText = await fs.readFile(
+      path.join(result.runDir, 'logs', 'events.jsonl'),
+      'utf8',
+    );
+    const events = eventsText.trim().split('\n').map((line) => JSON.parse(line));
+    const failed = events.filter((event) => event.type === 'polish:failed');
+    assert.equal(failed.length, 1);
+    assert.equal(failed[0].code, 'POLISH_FAILED');
+    assert.match(failed[0].summary, /candidate verification failed/i);
+    assert.doesNotMatch(
+      JSON.stringify(failed[0]),
+      /private\.invalid|Broken item|expected text|[A-Z]:\\/i,
+    );
+    assert.doesNotMatch(eventsText, /private\.invalid|Broken item|[A-Z]:\\/i);
+    assert.equal(events.filter((event) => event.type === 'fix:start').length, 0);
+    assert.equal(events.filter((event) => event.type === 'review').length, 2);
+  } finally {
+    await fs.rm(tmpRoot, { recursive: true, force: true });
+  }
+});
+
+test('failed polish promotion exposes safe rollback recovery evidence', { skip: !ENABLED, timeout: 300_000 }, async () => {
+  const tmpRoot = await fs.realpath(
+    await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-one-polish-rollback-failed-')),
+  );
+  const targetDir = path.join(tmpRoot, 'target');
+  const brief = '# Expenses\nList expenses with a total and an Add button.\n';
+  await fs.mkdir(path.join(targetDir, 'input'), { recursive: true });
+  await fs.writeFile(path.join(targetDir, 'input', 'brief.md'), brief);
+  const provider = createPolishLifecycleProvider();
+  const config = {
+    stack: 'react-vite',
+    viewport: { width: 390, height: 844 },
+    maxRepairRounds: 0,
+    maxPolishRounds: 1,
+    model: 'stub-polish-rollback-failed',
+    baseUrl: 'https://private.invalid/v1',
+    temperature: 0.2,
+    brief,
+    references: [],
+    visualThreshold: 0.62,
+    runsRoot: path.join(tmpRoot, 'runs'),
+  };
+  const rollbackError = new Error('raw OS failure at D:/private/candidate');
+  rollbackError.code = 'POLISH_ROLLBACK_FAILED';
+  rollbackError.draftRetained = true;
+  rollbackError.recoveryRequired = true;
+  try {
+    const result = await runPipeline({
+      targetDir,
+      config,
+      provider,
+      promoteCandidate: async () => {
+        throw rollbackError;
+      },
+    });
+    assert.equal(result.status, 'failed');
+    assert.equal(result.errorCode, 'POLISH_FAILED');
+    assert.equal(provider.observed.buildCalls, 1);
+    assert.equal(provider.observed.polishCalls, 1);
+    assert.equal(result.polish.status, 'failed');
+    assert.equal(result.polish.failureCauseCode, 'POLISH_ROLLBACK_FAILED');
+    assert.deepEqual(result.polish.recovery, {
+      draftRetained: true,
+      recoveryRequired: true,
+    });
+    assert.equal(result.finalReview.pass, true);
+
+    const draft = await fs.readFile(path.join(result.runDir, 'app', 'src', 'App.jsx'), 'utf8');
+    const candidate = await fs.readFile(
+      path.join(result.runDir, 'polish', 'candidate', 'src', 'App.jsx'),
+      'utf8',
+    );
+    assert.doesNotMatch(draft, /data-polish-marker/);
+    assert.match(candidate, /data-polish-marker='verified'/);
+    await assert.rejects(
+      fs.stat(path.join(result.runDir, 'polish', 'draft-app')),
+      { code: 'ENOENT' },
+    );
+
+    const eventsText = await fs.readFile(
+      path.join(result.runDir, 'logs', 'events.jsonl'),
+      'utf8',
+    );
+    const events = eventsText.trim().split('\n').map((line) => JSON.parse(line));
+    const failed = events.filter((event) => event.type === 'polish:failed');
+    assert.equal(failed.length, 1);
+    assert.deepEqual(failed[0], {
+      ts: failed[0].ts,
+      type: 'polish:failed',
+      code: 'POLISH_FAILED',
+      summary: failed[0].summary,
+      failureCauseCode: 'POLISH_ROLLBACK_FAILED',
+      draftRetained: true,
+      recoveryRequired: true,
+    });
+    assert.doesNotMatch(
+      JSON.stringify(failed[0]),
+      /raw OS failure|private\.invalid|D:/i,
+    );
+  } finally {
+    await fs.rm(tmpRoot, { recursive: true, force: true });
+  }
+});
+
+test('plan-only pipeline never builds or polishes', { skip: !ENABLED, timeout: 30_000 }, async () => {
+  const tmpRoot = await fs.realpath(
+    await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-one-polish-plan-only-')),
+  );
+  const targetDir = path.join(tmpRoot, 'target');
+  const brief = '# Expenses\nPlan an expense tracker.\n';
+  await fs.mkdir(path.join(targetDir, 'input'), { recursive: true });
+  await fs.writeFile(path.join(targetDir, 'input', 'brief.md'), brief);
+  let plannerCalls = 0;
+  let chatCalls = 0;
+  try {
+    const result = await runPipeline({
+      targetDir,
+      planOnly: true,
+      config: {
+        stack: 'react-vite',
+        viewport: { width: 390, height: 844 },
+        maxRepairRounds: 1,
+        maxPolishRounds: 1,
+        model: 'stub-plan-only',
+        baseUrl: 'http://stub.local/v1',
+        temperature: 0.2,
+        brief,
+        references: [],
+        runsRoot: path.join(tmpRoot, 'runs'),
+      },
+      provider: {
+        async chatJson() {
+          plannerCalls += 1;
+          return { json: SPEC, usage: {}, model: 'stub-plan-only' };
+        },
+        async chat() {
+          chatCalls += 1;
+          throw new Error('build/polish must not run');
+        },
+      },
+    });
+    assert.equal(result.status, 'planned');
+    assert.equal(plannerCalls, 1);
+    assert.equal(chatCalls, 0);
+    const events = await fs.readFile(
+      path.join(result.runDir, 'logs', 'events.jsonl'),
+      'utf8',
+    );
+    assert.doesNotMatch(events, /polish:|build:start/);
+  } finally {
+    await fs.rm(tmpRoot, { recursive: true, force: true });
+  }
+});
 
 test('full pipeline succeeds end-to-end with a stub model (no API)', { skip: !ENABLED, timeout: 300_000 }, async () => {
   // Canonicalize Windows 8.3 temp aliases (for example ASCHEN~1). Vite/Rollup
@@ -397,6 +917,203 @@ test('repair loop fixes a broken notes app and reaches success', { skip: !ENABLE
   assert.ok(shots.some((f) => f.startsWith('scenario-') && f.endsWith('.png')));
 
   await fs.rm(tmpRoot, { recursive: true, force: true });
+});
+
+test('UI quality failure sends screenshots to the fixer and passes after one repair', { skip: !ENABLED, timeout: 300_000 }, async () => {
+  const tmpRoot = await fs.realpath(
+    await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-one-ui-quality-repair-')),
+  );
+  const targetDir = path.join(tmpRoot, 'ui-quality-repair');
+  const brief = '# Quality overview\nKeep the Add record action usable.\n';
+  await fs.mkdir(path.join(targetDir, 'input'), { recursive: true });
+  await fs.writeFile(path.join(targetDir, 'input', 'brief.md'), brief);
+  const config = {
+    stack: 'react-vite',
+    viewport: { width: 390, height: 844 },
+    maxRepairRounds: 1,
+    model: 'stub-ui-repair',
+    baseUrl: 'https://private.invalid/v1',
+    temperature: 0.2,
+    brief,
+    runsRoot: path.join(tmpRoot, 'runs'),
+  };
+
+  try {
+    const provider = createUiRepairProvider();
+    const result = await runPipeline({
+      targetDir,
+      config,
+      provider,
+    });
+
+    assert.equal(result.status, 'success');
+    assert.match(provider.observed.promptText, /HIT_TARGET_TOO_SMALL/);
+    assert.match(
+      provider.observed.promptText,
+      /quality-1-overview-(desktop|mobile)-round-0(?:-\d+)?\.png/,
+    );
+    assert.equal(provider.observed.imageCount, 2);
+    assert.doesNotMatch(
+      provider.observed.promptText,
+      /private\.invalid|data:image|vibe-one-ui-quality-repair-/,
+    );
+    assert.equal(result.errorCode, undefined);
+    assert.equal(result.uiQuality.summary.pass, true);
+    assert.equal(result.qualityHistory.length, 2);
+    assert.equal(result.qualityHistory[0].summary.pass, false);
+    assert.equal(result.qualityHistory[1].summary.pass, true);
+
+    const qualityDir = path.join(result.runDir, 'quality');
+    const [roundZero, roundOne, history] = await Promise.all([
+      fs.readFile(path.join(qualityDir, 'round-0.json'), 'utf8'),
+      fs.readFile(path.join(qualityDir, 'round-1.json'), 'utf8'),
+      fs.readFile(path.join(qualityDir, 'history.json'), 'utf8'),
+    ]);
+    const roundZeroEvidence = JSON.parse(roundZero);
+    const roundOneEvidence = JSON.parse(roundOne);
+    assert.equal(roundZeroEvidence.summary.pass, false);
+    assert.equal(roundOneEvidence.summary.pass, true);
+    assert.equal(JSON.parse(history).length, 2);
+    const roundZeroScreenshots = roundZeroEvidence.results.map(
+      (entry) => entry.screenshot,
+    );
+    const roundOneScreenshots = roundOneEvidence.results.map(
+      (entry) => entry.screenshot,
+    );
+    assert.ok(roundZeroScreenshots.every((name) => /-round-0(?:-\d+)?\.png$/.test(name)));
+    assert.ok(roundOneScreenshots.every((name) => /-round-1(?:-\d+)?\.png$/.test(name)));
+    assert.equal(
+      roundZeroScreenshots.some((name) => roundOneScreenshots.includes(name)),
+      false,
+    );
+    const [roundZeroImage, roundOneImage] = await Promise.all([
+      fs.readFile(path.join(qualityDir, roundZeroScreenshots[0])),
+      fs.readFile(path.join(qualityDir, roundOneScreenshots[0])),
+    ]);
+    assert.ok(roundZeroImage.length > 0);
+    assert.ok(roundOneImage.length > 0);
+    assert.notDeepEqual(roundZeroImage, roundOneImage);
+
+    const eventsText = await fs.readFile(
+      path.join(result.runDir, 'logs', 'events.jsonl'),
+      'utf8',
+    );
+    const events = eventsText.trim().split('\n').map((line) => JSON.parse(line));
+    const qualityEvents = events.filter((event) => event.type === 'quality:audit');
+    assert.equal(qualityEvents.length, 3);
+    assert.match(qualityEvents[0].summary, /2 checks failing/);
+    assert.match(qualityEvents[1].summary, /checks pass/);
+    assert.match(qualityEvents[2].summary, /checks pass/);
+    assert.ok(
+      events.findIndex((event) => event === qualityEvents[0])
+        < events.findIndex((event) => event === qualityEvents[1]),
+    );
+    assert.ok(
+      events.findIndex((event) => event === qualityEvents[1])
+        < events.findIndex((event) => event === qualityEvents[2]),
+    );
+
+    const report = await fs.readFile(path.join(result.runDir, 'DELIVERY_REPORT.md'), 'utf8');
+    const publicEvidence = eventsText + '\n' + report;
+    assert.doesNotMatch(
+      publicEvidence,
+      /private\.invalid|data:image|base64|vibe-one-ui-quality-repair-|[A-Z]:\\/i,
+    );
+  } finally {
+    await fs.rm(tmpRoot, { recursive: true, force: true });
+  }
+});
+
+test('exhausted UI quality review returns the stable failure code', { skip: !ENABLED, timeout: 300_000 }, async () => {
+  const tmpRoot = await fs.realpath(
+    await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-one-ui-quality-failed-')),
+  );
+  const targetDir = path.join(tmpRoot, 'ui-quality-failed');
+  const brief = '# Quality overview\nKeep the Add record action usable.\n';
+  await fs.mkdir(path.join(targetDir, 'input'), { recursive: true });
+  await fs.writeFile(path.join(targetDir, 'input', 'brief.md'), brief);
+  const config = {
+    stack: 'react-vite',
+    viewport: { width: 390, height: 844 },
+    maxRepairRounds: 0,
+    model: 'stub-ui-failed',
+    baseUrl: 'https://private.invalid/v1',
+    temperature: 0.2,
+    brief,
+    runsRoot: path.join(tmpRoot, 'runs'),
+  };
+
+  try {
+    const result = await runPipeline({
+      targetDir,
+      config,
+      provider: createUiRepairProvider(),
+    });
+    assert.equal(result.status, 'failed');
+    assert.equal(result.errorCode, 'UI_QUALITY_FAILED');
+    assert.equal(result.uiQuality.summary.pass, false);
+    assert.equal(result.qualityHistory.length, 1);
+    assert.ok(result.qualityHistory[0].summary.failures.every(
+      (failure) => failure.code === 'HIT_TARGET_TOO_SMALL',
+    ));
+  } finally {
+    await fs.rm(tmpRoot, { recursive: true, force: true });
+  }
+});
+
+test('coded UI collector infrastructure errors stay fatal and skip repair', { skip: !ENABLED, timeout: 300_000 }, async () => {
+  const tmpRoot = await fs.realpath(
+    await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-one-ui-collector-fatal-')),
+  );
+  const targetDir = path.join(tmpRoot, 'ui-collector-fatal');
+  const brief = '# Expenses\nList expenses with a total and an Add button.\n';
+  await fs.mkdir(path.join(targetDir, 'input'), { recursive: true });
+  await fs.writeFile(path.join(targetDir, 'input', 'brief.md'), brief);
+  const provider = createStubProvider();
+  const buildChat = provider.chat.bind(provider);
+  let chatCalls = 0;
+  provider.chat = async (request) => {
+    chatCalls += 1;
+    return buildChat(request);
+  };
+  const uiCollector = async () => {
+    const error = new Error(
+      'UI_QUALITY_ROUTE_INVALID: https://private.invalid D:\\private\\artifact',
+    );
+    error.code = 'UI_QUALITY_ROUTE_INVALID';
+    throw error;
+  };
+  const config = {
+    stack: 'react-vite',
+    viewport: { width: 390, height: 844 },
+    maxRepairRounds: 1,
+    model: 'stub-ui-collector-fatal',
+    baseUrl: 'https://private.invalid/v1',
+    temperature: 0.2,
+    brief,
+    runsRoot: path.join(tmpRoot, 'runs'),
+  };
+
+  try {
+    const result = await runPipeline({
+      targetDir,
+      config,
+      provider,
+      uiCollector,
+    });
+    assert.equal(result.status, 'failed');
+    assert.equal(result.errorCode, 'UI_QUALITY_ROUTE_INVALID');
+    assert.equal(chatCalls, 1, 'collector infrastructure failure must not call fixer');
+    assert.equal(result.qualityHistory.length, 0);
+    const events = await fs.readFile(
+      path.join(result.runDir, 'logs', 'events.jsonl'),
+      'utf8',
+    );
+    assert.match(events, /"type":"fatal".*"code":"UI_QUALITY_ROUTE_INVALID"/);
+    assert.doesNotMatch(events, /private\.invalid|D:\\private|artifact/);
+  } finally {
+    await fs.rm(tmpRoot, { recursive: true, force: true });
+  }
 });
 
 test('visual reference passes on round zero with deterministic local scoring', { skip: !ENABLED, timeout: 300_000 }, async () => {

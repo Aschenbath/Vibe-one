@@ -8,10 +8,16 @@ import { BUILDER_SYSTEM, safeJoin } from '../src/core/builder.js';
 import { parseFileBlocks } from '../src/core/builder.js';
 import { createProvider, extractJson, resolveRequestTimeout } from '../src/providers/openaiCompatible.js';
 import { review } from '../src/core/reviewer.js';
-import { createFixerUserContent, describeFailure, gatherSource } from '../src/core/fixer.js';
+import {
+  UI_EVIDENCE_LIMITS,
+  createFixerUserContent,
+  describeFailure,
+  gatherSource,
+  validateUiEvidenceFiles,
+} from '../src/core/fixer.js';
 import { writeReport } from '../src/reporter/deliveryReport.js';
 import { exitCodeForStatus } from '../src/cli/status.js';
-import { createRunContext } from '../src/core/runContext.js';
+import { createRunContext, PROJECT_ROOT } from '../src/core/runContext.js';
 import { loadConfig } from '../src/core/config.js';
 import { PLANNER_SYSTEM, createPlannerUserContent, plan } from '../src/core/planner.js';
 import { runPipeline } from '../src/core/pipeline.js';
@@ -28,6 +34,12 @@ const ONE_PIXEL_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
   'base64',
 );
+
+async function loadPolisherModule() {
+  const module = await import('../src/core/polisher.js').catch(() => null);
+  assert.ok(module, 'polisher module must exist');
+  return module;
+}
 const PRODUCT_DESIGN = {
   productType: '数据密集型 B2B SaaS',
   targetUsers: ['客服运营主管', '质检专员'],
@@ -57,9 +69,18 @@ const PRODUCT_DESIGN = {
     radii: ['4px', '8px', '12px'],
   },
   requiredStates: [
-    { name: 'loading', trigger: '首次加载质量概览时' },
-    { name: 'empty', trigger: '筛选条件没有匹配记录时' },
-    { name: 'success', trigger: '批量质检任务提交完成时' },
+    {
+      name: 'loading', trigger: '首次加载质量概览时', route: '/overview?state=loading',
+      steps: [], expectText: '正在加载质量数据',
+    },
+    {
+      name: 'empty', trigger: '筛选条件没有匹配记录时', route: '/queue',
+      steps: [{ action: 'fill', target: '搜索记录', value: 'missing' }], expectText: '没有匹配记录',
+    },
+    {
+      name: 'success', trigger: '批量质检任务提交完成时', route: '/queue',
+      steps: [{ action: 'click', target: '提交质检' }], expectText: '质检任务已提交',
+    },
   ],
 };
 
@@ -118,9 +139,9 @@ test('product design requires at least two distinct valid states', () => {
     () => validateProductDesign({
       ...PRODUCT_DESIGN,
       requiredStates: [
-        { name: 'loading', trigger: '首次加载质量概览时' },
-        { name: 'empty', trigger: '筛选条件没有匹配记录时' },
-        { name: 'loading', trigger: '刷新质量概览时' },
+        PRODUCT_DESIGN.requiredStates[0],
+        PRODUCT_DESIGN.requiredStates[1],
+        { ...PRODUCT_DESIGN.requiredStates[0], trigger: '刷新质量概览时' },
       ],
     }),
     (error) => error.code === 'PRODUCT_DESIGN_INVALID',
@@ -137,6 +158,9 @@ test('product design rejects incomplete lists, states, triggers, and token group
     ['blank responsiveRules', { responsiveRules: [' '] }],
     ['invalid state', { requiredStates: [{ name: 'idle', trigger: '等待任务开始时' }, PRODUCT_DESIGN.requiredStates[1]] }],
     ['short trigger', { requiredStates: [{ name: 'loading', trigger: '短' }, PRODUCT_DESIGN.requiredStates[1]] }],
+    ['missing state route', { requiredStates: [{ ...PRODUCT_DESIGN.requiredStates[0], route: '' }, PRODUCT_DESIGN.requiredStates[1]] }],
+    ['missing state evidence', { requiredStates: [{ ...PRODUCT_DESIGN.requiredStates[0], expectText: '' }, PRODUCT_DESIGN.requiredStates[1]] }],
+    ['invalid state step', { requiredStates: [{ ...PRODUCT_DESIGN.requiredStates[0], steps: [{ action: 'fill', target: '搜索记录' }] }, PRODUCT_DESIGN.requiredStates[1]] }],
     ['colors insufficient', { tokens: { ...PRODUCT_DESIGN.tokens, colors: { canvas: '#fff' } } }],
     ['typography insufficient', { tokens: { ...PRODUCT_DESIGN.tokens, typography: { body: '14px sans-serif' } } }],
     ['spacing insufficient', { tokens: { ...PRODUCT_DESIGN.tokens, spacing: ['4px'] } }],
@@ -156,15 +180,122 @@ test('package test command is compatible with the Node 20 CI runner', async () =
   const pkg = JSON.parse(await fs.readFile(new URL('../package.json', import.meta.url), 'utf8'));
   assert.equal(
     pkg.scripts.test,
-    'node --test test/console.test.js test/console-e2e.test.js test/core.test.js test/e2e.test.js test/visual.test.js',
+    'node --test test/console.test.js test/console-e2e.test.js test/core.test.js test/e2e.test.js test/ui-quality.test.js test/visual.test.js',
   );
   assert.doesNotMatch(pkg.scripts.test, /[*?]/);
 });
 
 test('builder prompt keeps model output within the gateway-friendly MVP budget', () => {
-  assert.match(BUILDER_SYSTEM, /at most 8 files/i);
-  assert.match(BUILDER_SYSTEM, /12,000 characters/i);
+  assert.match(BUILDER_SYSTEM, /at most 12 files/i);
+  assert.match(BUILDER_SYSTEM, /24,000 characters/i);
+  assert.match(BUILDER_SYSTEM, /target response budget.*18,000 characters/i);
+  assert.match(BUILDER_SYSTEM, /default to exactly four model-authored files.*never exceed six/is);
   assert.match(BUILDER_SYSTEM, /src\/App\.jsx/);
+  assert.match(BUILDER_SYSTEM, /CSS variables.*design tokens.*actually use/is);
+  assert.match(BUILDER_SYSTEM, /realistic.*consistent mock data/is);
+  assert.match(BUILDER_SYSTEM, /loading.*empty.*error.*success.*trigger/is);
+  assert.match(BUILDER_SYSTEM, /requiredStates.*route.*steps.*expectText/is);
+  assert.match(BUILDER_SYSTEM, /44px.*targets/is);
+  assert.match(BUILDER_SYSTEM, /style.*button.*input.*select.*number spinner/is);
+  assert.match(BUILDER_SYSTEM, /responsive.*page boundaries/is);
+  assert.match(BUILDER_SYSTEM, /do not use Emoji.*functional icons/is);
+  assert.match(BUILDER_SYSTEM, /lorem ipsum.*Card 1.*Item A/is);
+});
+
+test('builder exposes the fixed dependency and output limit contracts', async () => {
+  const { APP_DEPENDENCIES, BUILD_LIMITS, BUILDER_MAX_TOKENS } = await import('../src/core/builder.js');
+
+  assert.equal(APP_DEPENDENCIES.dependencies['lucide-react'], '^0.468.0');
+  assert.deepEqual(BUILD_LIMITS, { maxFiles: 12, maxCharacters: 24_000 });
+  assert.equal(BUILDER_MAX_TOKENS, 6_000);
+  assert.equal(Object.isFrozen(BUILD_LIMITS), true);
+  assert.equal(Object.isFrozen(APP_DEPENDENCIES), true);
+  assert.equal(Object.isFrozen(APP_DEPENDENCIES.dependencies), true);
+  assert.equal(Object.isFrozen(APP_DEPENDENCIES.devDependencies), true);
+});
+
+test('generated file limits accept the exact file and character boundaries', async () => {
+  const { validateGeneratedFiles } = await import('../src/core/builder.js');
+  const files = Array.from({ length: 12 }, (_, index) => ({
+    path: 'src/file-' + index + '.js',
+    content: index === 0 ? 'x'.repeat(23_989) : 'x',
+  }));
+
+  assert.equal(files.reduce((total, file) => total + file.content.length, 0), 24_000);
+  assert.equal(validateGeneratedFiles(files), files);
+});
+
+test('generated file limits reject excess and malformed model output with a stable code', async () => {
+  const { validateGeneratedFiles } = await import('../src/core/builder.js');
+  const tooMany = Array.from({ length: 13 }, (_, index) => ({
+    path: 'src/file-' + index + '.js',
+    content: 'x',
+  }));
+
+  assert.throws(
+    () => validateGeneratedFiles(tooMany),
+    (error) => error.code === 'BUILD_OUTPUT_LIMIT' && /13 files.*12/i.test(error.message),
+  );
+  assert.throws(
+    () => validateGeneratedFiles([{ path: 'src/App.jsx', content: 'x'.repeat(24_001) }]),
+    (error) => error.code === 'BUILD_OUTPUT_LIMIT' && /24001.*24000/.test(error.message),
+  );
+  for (const files of [
+    undefined,
+    null,
+    {},
+    [],
+    [{ path: 'src/App.jsx' }],
+    [{ path: 'src/App.jsx', content: 42 }],
+  ]) {
+    assert.throws(
+      () => validateGeneratedFiles(files),
+      (error) => error.code === 'BUILD_OUTPUT_LIMIT',
+    );
+  }
+});
+
+test('build rejects over-limit output before writing any model-authored file', async () => {
+  const { build } = await import('../src/core/builder.js');
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-builder-limit-order-'));
+  const appDir = path.join(root, 'app');
+  const events = [];
+  let requestOptions;
+  const content = Array.from({ length: 13 }, (_, index) => [
+    '=== FILE: src/file-' + index + '.jsx',
+    'export default function File' + index + '() { return null; }',
+    '=== END ===',
+  ].join('\n')).join('\n');
+  const ctx = {
+    appDir,
+    logEvent: async (type, data) => events.push({ type, ...data }),
+    addUsage: () => {},
+  };
+
+  await fs.mkdir(appDir, { recursive: true });
+  try {
+    await assert.rejects(
+      build(
+        ctx,
+        { chat: async (options) => {
+          requestOptions = options;
+          return { content, usage: {} };
+        } },
+        { brief: '构建质量运营工作台' },
+        { summary: '质量运营工作台' },
+      ),
+      (error) => error.code === 'BUILD_OUTPUT_LIMIT',
+    );
+    assert.equal((await fs.stat(path.join(appDir, 'package.json'))).isFile(), true);
+    await assert.rejects(
+      fs.access(path.join(appDir, 'src', 'file-0.jsx')),
+      (error) => error.code === 'ENOENT',
+    );
+    assert.equal(events.some((event) => event.type === 'build:done'), false);
+    assert.equal(requestOptions.maxTokens, 6_000);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
 });
 
 test('planned and successful runs exit cleanly', () => {
@@ -209,8 +340,10 @@ test('extractJson tolerates markdown fences', () => {
 
 test('provider preserves OpenAI-compatible multimodal user content', async (t) => {
   let requestBody;
+  let requestHeaders;
   t.mock.method(globalThis, 'fetch', async (_url, options) => {
     requestBody = JSON.parse(options.body);
+    requestHeaders = options.headers;
     return new Response(
       JSON.stringify({ choices: [{ message: { content: '{}' } }] }),
       { status: 200, headers: { 'content-type': 'application/json' } },
@@ -223,15 +356,18 @@ test('provider preserves OpenAI-compatible multimodal user content', async (t) =
     temperature: 0,
     streamResponses: false,
     maxNetworkRetries: 0,
+    userAgent: 'approved-client/1.0',
   });
   const content = [
     { type: 'text', text: 'Clone this UI' },
     { type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' } },
   ];
 
-  await provider.chatJson({ system: 'system', user: content });
+  await provider.chatJson({ system: 'system', user: content, maxTokens: 6_000 });
 
   assert.deepEqual(requestBody.messages[1].content, content);
+  assert.equal(requestBody.max_tokens, 6_000);
+  assert.equal(requestHeaders['user-agent'], 'approved-client/1.0');
 });
 
 test('provider rejects unsupported multimodal parts before sending a request', async (t) => {
@@ -341,6 +477,8 @@ test('planner validates product design and writes bilingual artifacts', async ()
     assert.match(PLANNER_SYSTEM, /at least 6 color tokens.*4 typography tokens.*5 spacing values.*3 radii/is);
     assert.match(PLANNER_SYSTEM, /at least 2 distinct states.*loading.*empty.*error.*success/is);
     assert.match(PLANNER_SYSTEM, /trigger.*at least 4 characters/is);
+    assert.match(PLANNER_SYSTEM, /requiredStates.*route.*steps.*expectText/is);
+    assert.match(PLANNER_SYSTEM, /deterministic.*without timing races/is);
     assert.match(PLANNER_SYSTEM, /density.*compact.*8 characters/is);
     assert.match(specMd, /产品设计 \/ Product Design/);
     assert.match(specMd, /客服运营主管/);
@@ -483,6 +621,44 @@ test('pipeline fails before build when a reference is not mapped by the planner'
     assert.equal(result.status, 'failed');
     assert.equal(buildCalls, 0);
     assert.match(events, /"type":"fatal".*"code":"VISUAL_PLAN_INVALID"/);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('pipeline returns PIPELINE_FAILED for an uncoded infrastructure exception', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-pipeline-uncoded-'));
+  const privatePath = 'D:\\private\\vibe-secret\\artifact.txt';
+  const config = {
+    stack: 'react-vite',
+    viewport: { width: 390, height: 844 },
+    maxRepairRounds: 0,
+    model: 'stub',
+    baseUrl: 'https://private.invalid/v1',
+    brief: '# Brief',
+    references: [],
+    runsRoot: path.join(root, 'runs'),
+  };
+  const provider = {
+    chatJson: async () => {
+      throw new Error(`browser failed at ${privatePath}`);
+    },
+  };
+
+  try {
+    const result = await runPipeline({
+      targetDir: path.join(root, 'target'),
+      config,
+      provider,
+    });
+    assert.equal(result.status, 'failed');
+    assert.equal(result.errorCode, 'PIPELINE_FAILED');
+    const events = await fs.readFile(
+      path.join(result.runDir, 'logs', 'events.jsonl'),
+      'utf8',
+    );
+    assert.match(events, /"type":"fatal".*"summary":"PIPELINE_FAILED"/);
+    assert.doesNotMatch(events, /private\.invalid|vibe-secret|artifact\.txt/);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
@@ -655,6 +831,41 @@ test('review passes only when everything is green', () => {
   assert.equal(missingPage.pass, false);
 });
 
+test('review gates otherwise-green delivery on the UI quality summary', () => {
+  const base = {
+    install: { exitCode: 0 },
+    build: { exitCode: 0 },
+    shots: [okShot],
+    spec: { pages: [{ name: 'Home', route: '/' }] },
+    scenarioResults: [],
+    visualResults: [],
+  };
+  const failure = {
+    code: 'HIT_TARGET_TOO_SMALL',
+    page: '总览',
+    route: '/',
+    viewport: 'mobile',
+    detail: '筛选 32x32',
+    screenshot: 'quality-overview-mobile.png',
+  };
+  const failed = review({
+    ...base,
+    uiQuality: { pass: false, failures: [failure] },
+  });
+  const passed = review({
+    ...base,
+    uiQuality: { pass: true, failures: [] },
+  });
+
+  assert.equal(failed.pass, false);
+  assert.deepEqual(
+    failed.failed.map((check) => check.name),
+    ['UI quality audit passes'],
+  );
+  assert.deepEqual(failed.uiQuality.failures, [failure]);
+  assert.equal(passed.pass, true);
+});
+
 test('review requires mapped visual comparisons to meet threshold', () => {
   const spec = {
     pages: [{ name: 'Home', route: '/', referenceImage: 'home.png' }],
@@ -736,6 +947,42 @@ test('describeFailure includes build stderr and failed checks', () => {
   assert.match(text, /REVIEW CHECKS FAILED/);
 });
 
+test('describeFailure includes safe structured UI audit evidence only', () => {
+  const privateEndpoint = 'https://private.invalid/v1';
+  const windowsPath = 'D:\\private\\vibe-secret\\quality-overview-mobile.png';
+  const posixPath = '/private/vibe-secret/artifact.txt';
+  const failure = {
+    code: 'HIT_TARGET_TOO_SMALL',
+    page: '总览',
+    route: '/',
+    viewport: 'mobile',
+    detail: [
+      '筛选 32x32',
+      windowsPath,
+      posixPath,
+      privateEndpoint,
+      'Error: private failure\n    at secret.js:1:1',
+      'data:image/png;base64,AAAA',
+    ].join(' '),
+    screenshot: windowsPath,
+  };
+  const text = describeFailure({
+    reviewResult: {
+      failed: [{ name: 'UI quality audit passes', detail: '1 checks failing' }],
+      uiQuality: { pass: false, failures: [failure] },
+    },
+    uiQuality: { summary: { pass: false, failures: [failure] } },
+  });
+
+  assert.match(text, /UI QUALITY AUDIT FAILED/);
+  assert.match(text, /HIT_TARGET_TOO_SMALL.*总览.*mobile.*筛选 32x32/s);
+  assert.match(text, /quality-overview-mobile\.png/);
+  assert.doesNotMatch(
+    text,
+    /private\.invalid|vibe-secret|D:\\|\/private\/|data:image|secret\.js|\n\s*at\s/u,
+  );
+});
+
 test('gatherSource collects app source and skips scaffold + node_modules', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-src-'));
   await fs.mkdir(path.join(dir, 'src'), { recursive: true });
@@ -778,6 +1025,68 @@ test('visual repair content includes diagnostics, reference, and generated scree
     assert.equal(content.filter((part) => part.type === 'image_url').length, 2);
     assert.match(content[0].text, /visual similarity failed/);
     assert.match(content[1].text, /Home.*0\.4.*0\.62/s);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('UI repair content includes diagnostics and generated screenshots without reference labels', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-ui-fix-'));
+  const actual = path.join(root, 'quality-overview-mobile.png');
+  await fs.writeFile(actual, ONE_PIXEL_PNG);
+
+  try {
+    const content = await createFixerUserContent({
+      round: 1,
+      failure: 'UI quality audit failed',
+      source: '=== FILE: src/App.jsx\nexport default 1\n=== END ===',
+      uiFailures: [{
+        code: 'HIT_TARGET_TOO_SMALL',
+        page: '总览',
+        route: '/',
+        viewport: 'mobile',
+        detail: '筛选 32x32',
+        screenshot: 'quality-overview-mobile.png',
+        actualFile: actual,
+      }],
+    });
+
+    assert.equal(content.filter((part) => part.type === 'image_url').length, 1);
+    assert.match(content[0].text, /UI quality audit failed/);
+    assert.match(content[1].text, /HIT_TARGET_TOO_SMALL.*总览.*mobile.*筛选 32x32/s);
+    assert.doesNotMatch(content[1].text, /Reference image follows|vibe-ui-fix-/);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('UI repair evidence rejects more than the bounded screenshot count', async () => {
+  const failures = Array.from(
+    { length: 9 },
+    (_, index) => ({ actualFile: `quality-${index}.png` }),
+  );
+  await assert.rejects(
+    validateUiEvidenceFiles(failures),
+    (error) => error.code === 'UI_EVIDENCE_LIMIT',
+  );
+  assert.equal(UI_EVIDENCE_LIMITS.maxFiles, 8);
+});
+
+test('UI repair evidence rejects aggregate bytes before reading image content', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-ui-evidence-limit-'));
+  const files = [];
+  try {
+    for (let index = 0; index < 4; index += 1) {
+      const file = path.join(root, `quality-${index}.png`);
+      await fs.writeFile(file, '');
+      await fs.truncate(file, 6 * 1024 * 1024 + 1);
+      files.push({ actualFile: file });
+    }
+    await assert.rejects(
+      validateUiEvidenceFiles(files),
+      (error) => error.code === 'UI_EVIDENCE_LIMIT',
+    );
+    assert.equal(UI_EVIDENCE_LIMITS.maxTotalBytes, 24 * 1024 * 1024);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
@@ -830,6 +1139,846 @@ test('delivery report records input references and visual score history', async 
   assert.doesNotMatch(report, /private\.invalid|vibe-secret/);
   assert.doesNotMatch(events, /vibe-visual-report-|vibe-secret|private\.invalid/);
   await fs.rm(root, { recursive: true, force: true });
+});
+
+test('delivery report writes bilingual safe evidence and structured sidecars', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-bilingual-report-'));
+  const privateEndpoint = 'https://private.invalid/v1';
+  const privatePath = 'D:/private/vibe-secret/artifact.txt';
+  const privateImage = 'data:image/png;base64,private-image';
+  const privateCredential = 'sk-report-private-1234567890';
+  const ctx = {
+    runId: 'quality-run',
+    runDir: root,
+    events: [],
+    usage: { promptTokens: 120, completionTokens: 80, calls: 4 },
+    async logEvent(type, data) {
+      this.events.push({ type, ...data });
+    },
+  };
+  const visualHistory = [
+    { round: 0, results: [{ page: '质量概览', score: 0.54, threshold: 0.62, structure: 0.61, color: 0.3767, pass: false }] },
+    { round: 1, results: [{ page: '质量概览', score: 0.7812, threshold: 0.62, structure: 0.79, color: 0.7607, pass: true }] },
+  ];
+
+  await writeReport(ctx, {
+    config: {
+      model: `stub ${privateCredential} path=/srv/private/key.txt file=//server/share/key.txt`,
+      baseUrl: privateEndpoint,
+      apiKey: 'session-secret',
+      stack: 'react-vite',
+      maxRepairRounds: 1,
+      references: [{ name: 'home.png', width: 390, height: 844, type: 'image/png' }],
+    },
+    spec: {
+      summary: '客服质量工作台',
+      productDesign: {
+        ...PRODUCT_DESIGN,
+        tokens: {
+          ...PRODUCT_DESIGN.tokens,
+          apiKey: privateCredential,
+          authorization: `Bearer ${privateCredential}`,
+        },
+        endpoint: privateEndpoint,
+      },
+      pages: [
+        { name: '质量概览', route: '/', purpose: '定位风险趋势', mustContain: ['风险趋势'], privatePath },
+        { name: '会话复核', route: '/reviews', purpose: '完成会话复核', mustContain: ['复核队列'] },
+      ],
+      scenarios: [{
+        name: '筛选高风险会话',
+        route: '/',
+        steps: [{ action: 'click', target: '高风险' }],
+        expectText: '高风险会话',
+        screenshot: privateImage,
+      }],
+      acceptance: ['运营人员可以下钻到风险会话', '复核状态可以被更新'],
+      apiKey: 'session-secret',
+      baseUrl: privateEndpoint,
+    },
+    status: 'success',
+    rounds: 1,
+    finalReview: {
+      pass: true,
+      checks: [
+        { name: 'build succeeds', pass: true, detail: 'build exit 0' },
+        { name: 'scenario passes', pass: true, detail: '1/1 scenarios pass' },
+      ],
+    },
+    shots: [{ page: '质量概览', file: privatePath, bytes: 321 }],
+    scenarioResults: [{ name: '筛选高风险会话', pass: true, raw: privateEndpoint }],
+    visualHistory,
+    qualityHistory: [{
+      round: 0,
+      summary: { pass: false, failures: [{ code: 'HIT_TARGET_TOO_SMALL', page: '质量概览', viewport: 'mobile', screenshot: 'overview-mobile-round-0.png', detail: privatePath }] },
+      results: [
+        { page: '质量概览', viewport: 'desktop', pass: true, screenshot: 'overview-desktop-round-0.png', actualFile: privatePath },
+        { page: '质量概览', viewport: 'mobile', pass: false, screenshot: 'overview-mobile-round-0.png', actualFile: privatePath },
+      ],
+    }],
+    uiQuality: {
+      summary: { pass: true, failures: [] },
+      results: [
+        { page: '质量概览', viewport: 'desktop', pass: true, screenshot: 'overview-desktop-polish.png', actualFile: privatePath },
+        { page: '质量概览', viewport: 'mobile', pass: true, screenshot: 'overview-mobile-polish.png', actualFile: privatePath },
+      ],
+    },
+    polish: {
+      status: 'failed',
+      changedFiles: ['src/App.jsx', '../private.js', privatePath],
+      draftReview: { pass: true },
+      candidateReview: { pass: false },
+      draftEvidence: { review: { pass: true, checks: [{ name: 'draft passes', pass: true }] }, screenshots: ['draft.png'], secret: privateImage },
+      candidateEvidence: { review: { pass: false, checks: [{ name: 'candidate scenario', pass: false }] }, screenshots: ['candidate.png'], raw: privatePath },
+      failureCauseCode: 'POLISH_ROLLBACK_FAILED',
+      recovery: { draftRetained: true, recoveryRequired: true },
+      providerResponse: privateImage,
+    },
+    error: new Error(`upstream ${privateEndpoint} failed at ${privatePath}`),
+  });
+
+  const [report, design, quality, polish] = await Promise.all([
+    fs.readFile(path.join(root, 'DELIVERY_REPORT.md'), 'utf8'),
+    fs.readFile(path.join(root, 'design.json'), 'utf8').then(JSON.parse),
+    fs.readFile(path.join(root, 'quality', 'summary.json'), 'utf8').then(JSON.parse),
+    fs.readFile(path.join(root, 'polish', 'summary.json'), 'utf8').then(JSON.parse),
+  ]);
+  for (const heading of [
+    /# 交付报告 \/ Delivery Report/,
+    /## 概览 \/ Overview/,
+    /## 产品设计 \/ Product Design/,
+    /## 验收 \/ Verification/,
+    /## UI 质量验收 \/ UI Quality Audit/,
+    /## 视觉比较 \/ Visual Comparison/,
+    /## 成品抛光 \/ Polish/,
+    /## 证据 \/ Evidence/,
+    /## 边界 \/ Boundaries/,
+  ]) assert.match(report, heading);
+  assert.match(report, /Status: \*\*success\*\*/);
+  assert.match(report, /Model: stub/);
+  assert.match(report, /Pages: 2/);
+  assert.match(report, /Scenarios: 1/);
+  assert.match(report, /Verification checks: 2/);
+  assert.match(report, /UI audit rounds: 1/);
+  assert.match(report, /desktop.*overview-desktop-round-0\.png/is);
+  assert.match(report, /mobile.*overview-mobile-round-0\.png/is);
+  assert.match(report, /### Round 0[\s\S]*0\.5400 \/ 0\.6200/);
+  assert.match(report, /### Round 1[\s\S]*0\.7812 \/ 0\.6200/);
+  assert.match(report, /Polish status: failed/);
+  assert.match(report, /POLISH_ROLLBACK_FAILED/);
+  assert.match(report, /draft retained: true/i);
+  assert.match(report, /recovery required: true/i);
+  assert.match(report, /120 prompt.*80 completion.*4 calls/is);
+  assert.match(report, /机械 UI 完成度.*Mechanical UI completion/is);
+  assert.match(report, /粗粒度参考相似度.*Coarse reference similarity/is);
+  assert.match(report, /人工视觉检查.*Human visual inspection/is);
+  assert.doesNotMatch(report, /pixel-perfect|像素级完美/i);
+
+  assert.equal(design.available, true);
+  assert.equal(design.pages.length, 2);
+  assert.equal(design.scenarios.length, 1);
+  assert.equal(design.acceptance.length, 2);
+  assert.equal(quality.available, true);
+  assert.equal(quality.rounds.length, 1);
+  assert.equal(quality.terminal.summary.pass, true);
+  assert.equal(quality.terminal.bucket, 'quality');
+  assert.deepEqual(quality.rounds[0].evidence, ['overview-desktop-round-0.png', 'overview-mobile-round-0.png']);
+  assert.equal(polish.available, true);
+  assert.deepEqual(polish.changedFiles, ['src/App.jsx']);
+  assert.equal(polish.draft.review.pass, true);
+  assert.equal(polish.candidate.review.pass, false);
+  assert.equal(polish.failureCauseCode, 'POLISH_ROLLBACK_FAILED');
+  assert.deepEqual(polish.recovery, { draftRetained: true, recoveryRequired: true });
+
+  const publicEvidence = [report, JSON.stringify(design), JSON.stringify(quality), JSON.stringify(polish), JSON.stringify(ctx.events)].join('\n');
+  assert.doesNotMatch(publicEvidence, /private\.invalid|vibe-secret|session-secret|data:image|base64|private-image|artifact\.txt|sk-report-private|Bearer\s+sk-report-private|srv\/private\/key|server\/share\/key/i);
+  assert.deepEqual((await fs.readdir(root)).filter((name) => name.includes('.tmp-')), []);
+  await fs.rm(root, { recursive: true, force: true });
+});
+
+test('polish limits and file validation enforce exact bounded safe output', async () => {
+  const {
+    POLISH_LIMITS,
+    validatePolishFiles,
+  } = await loadPolisherModule();
+  assert.equal(Object.isFrozen(POLISH_LIMITS), true);
+  assert.deepEqual(POLISH_LIMITS, {
+    maxFiles: 4,
+    maxCharacters: 18_000,
+    maxRounds: 1,
+  });
+  const exact = [
+    { path: 'src/a.js', content: 'a'.repeat(4_500) },
+    { path: 'src/b.js', content: 'b'.repeat(4_500) },
+    { path: 'src/c.js', content: 'c'.repeat(4_500) },
+    { path: 'src/d.js', content: 'd'.repeat(4_500) },
+  ];
+  assert.equal(validatePolishFiles(exact, APP), exact);
+
+  for (const files of [
+    Array.from({ length: 5 }, (_, index) => ({
+      path: `src/${index}.js`,
+      content: 'x',
+    })),
+    [{ path: 'src/large.js', content: 'x'.repeat(18_001) }],
+    null,
+    [],
+    [{ path: '', content: 'x' }],
+    [{ path: 'src/a.js', content: null }],
+  ]) {
+    assert.throws(
+      () => validatePolishFiles(files, APP),
+      (error) => error.code === 'POLISH_OUTPUT_LIMIT',
+    );
+  }
+});
+
+test('polish file validation reuses the builder path jail', async () => {
+  const { validatePolishFiles } = await loadPolisherModule();
+  for (const unsafePath of [
+    'package.json',
+    'package-lock.json',
+    'vite.config.js',
+    '.env',
+    'node_modules/pkg/index.js',
+    '../outside.js',
+    '/etc/passwd',
+    'C:\\Windows\\evil.js',
+  ]) {
+    assert.throws(
+      () => validatePolishFiles([{ path: unsafePath, content: 'x' }], APP),
+      (error) => error.code === 'POLISH_OUTPUT_LIMIT',
+      unsafePath,
+    );
+  }
+});
+
+test('polish candidate copies trusted source without disposable build caches', async () => {
+  const { createPolishCandidate } = await loadPolisherModule();
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-polish-copy-'));
+  const ctx = await createRunContext(path.join(root, 'target'), {
+    runsRoot: path.join(root, 'runs'),
+  });
+  try {
+    await fs.mkdir(path.join(ctx.appDir, 'src'), { recursive: true });
+    await fs.mkdir(path.join(ctx.appDir, 'node_modules', 'pkg'), { recursive: true });
+    await fs.mkdir(path.join(ctx.appDir, 'DIST'), { recursive: true });
+    await fs.mkdir(path.join(ctx.appDir, '.VITE'), { recursive: true });
+    await fs.writeFile(path.join(ctx.appDir, 'src', 'App.jsx'), 'draft');
+    await fs.writeFile(path.join(ctx.appDir, 'package.json'), '{"name":"app"}');
+    await fs.writeFile(path.join(ctx.appDir, 'vite.config.js'), 'export default {}');
+    await fs.writeFile(path.join(ctx.appDir, 'node_modules', 'pkg', 'index.js'), 'cache');
+    await fs.writeFile(path.join(ctx.appDir, 'DIST', 'index.js'), 'build');
+    await fs.writeFile(path.join(ctx.appDir, '.VITE', 'meta.json'), 'cache');
+
+    await createPolishCandidate(ctx);
+    await fs.writeFile(path.join(ctx.polishCandidateDir, 'src', 'App.jsx'), 'candidate');
+
+    assert.equal(await fs.readFile(path.join(ctx.appDir, 'src', 'App.jsx'), 'utf8'), 'draft');
+    assert.equal(await fs.readFile(path.join(ctx.polishCandidateDir, 'src', 'App.jsx'), 'utf8'), 'candidate');
+    assert.equal(await fs.readFile(path.join(ctx.polishCandidateDir, 'package.json'), 'utf8'), '{"name":"app"}');
+    assert.equal(await fs.readFile(path.join(ctx.polishCandidateDir, 'vite.config.js'), 'utf8'), 'export default {}');
+    for (const disposable of ['node_modules', 'DIST', '.VITE']) {
+      await assert.rejects(fs.stat(path.join(ctx.polishCandidateDir, disposable)), { code: 'ENOENT' });
+    }
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('polish candidate rejects source links before deleting or copying', async () => {
+  const { createPolishCandidate } = await loadPolisherModule();
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-polish-link-'));
+  const ctx = await createRunContext(path.join(root, 'target'), {
+    runsRoot: path.join(root, 'runs'),
+  });
+  try {
+    for (const detectedBy of ['dirent', 'lstat']) {
+      let removed = false;
+      let copied = false;
+      const entry = {
+        name: 'external-link',
+        isDirectory: () => false,
+        isSymbolicLink: () => detectedBy === 'dirent',
+      };
+      const operations = {
+        readdir: async () => [entry],
+        lstat: async () => ({
+          isDirectory: () => false,
+          isSymbolicLink: () => detectedBy === 'lstat',
+        }),
+        rm: async () => { removed = true; },
+        cp: async () => { copied = true; },
+      };
+
+      await assert.rejects(
+        createPolishCandidate(ctx, operations),
+        (error) => error.code === 'POLISH_SOURCE_LINK_UNSAFE',
+        detectedBy,
+      );
+      assert.equal(removed, false, detectedBy);
+      assert.equal(copied, false, detectedBy);
+    }
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('polish promotion retains the prior app as the owned draft', async () => {
+  const {
+    createPolishCandidate,
+    promotePolishCandidate,
+  } = await loadPolisherModule();
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-polish-promote-'));
+  const ctx = await createRunContext(path.join(root, 'target'), {
+    runsRoot: path.join(root, 'runs'),
+  });
+  try {
+    await fs.mkdir(path.join(ctx.appDir, 'src'), { recursive: true });
+    await fs.writeFile(path.join(ctx.appDir, 'src', 'App.jsx'), 'draft');
+    await createPolishCandidate(ctx);
+    await fs.writeFile(path.join(ctx.polishCandidateDir, 'src', 'App.jsx'), 'candidate');
+    await fs.mkdir(ctx.draftAppDir, { recursive: true });
+    await fs.writeFile(path.join(ctx.draftAppDir, 'stale.txt'), 'stale');
+
+    await promotePolishCandidate(ctx);
+
+    assert.equal(await fs.readFile(path.join(ctx.appDir, 'src', 'App.jsx'), 'utf8'), 'candidate');
+    assert.equal(await fs.readFile(path.join(ctx.draftAppDir, 'src', 'App.jsx'), 'utf8'), 'draft');
+    await assert.rejects(fs.stat(path.join(ctx.draftAppDir, 'stale.txt')), { code: 'ENOENT' });
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('polish promotion with a missing candidate leaves the app untouched', async () => {
+  const { promotePolishCandidate } = await loadPolisherModule();
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-polish-missing-'));
+  const ctx = await createRunContext(path.join(root, 'target'), {
+    runsRoot: path.join(root, 'runs'),
+  });
+  try {
+    await fs.mkdir(path.join(ctx.appDir, 'src'), { recursive: true });
+    await fs.writeFile(path.join(ctx.appDir, 'src', 'App.jsx'), 'draft');
+    await fs.rm(ctx.polishCandidateDir, { recursive: true, force: true });
+
+    await assert.rejects(
+      promotePolishCandidate(ctx),
+      (error) => error.code === 'POLISH_CANDIDATE_MISSING',
+    );
+    assert.equal(await fs.readFile(path.join(ctx.appDir, 'src', 'App.jsx'), 'utf8'), 'draft');
+    await assert.rejects(fs.stat(ctx.draftAppDir), { code: 'ENOENT' });
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('polish promotion restores the app when candidate promotion fails', async () => {
+  const {
+    createPolishCandidate,
+    promotePolishCandidate,
+  } = await loadPolisherModule();
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-polish-rollback-'));
+  const ctx = await createRunContext(path.join(root, 'target'), {
+    runsRoot: path.join(root, 'runs'),
+  });
+  try {
+    await fs.mkdir(path.join(ctx.appDir, 'src'), { recursive: true });
+    await fs.writeFile(path.join(ctx.appDir, 'src', 'App.jsx'), 'draft');
+    await createPolishCandidate(ctx);
+    await fs.writeFile(path.join(ctx.polishCandidateDir, 'src', 'App.jsx'), 'candidate');
+    const promotionError = new Error('candidate promotion failed');
+    promotionError.code = 'EACCES';
+    let renameCalls = 0;
+
+    await assert.rejects(
+      promotePolishCandidate(ctx, {
+        stat: fs.stat,
+        rm: fs.rm,
+        async rename(from, to) {
+          renameCalls += 1;
+          if (renameCalls === 2) throw promotionError;
+          return fs.rename(from, to);
+        },
+      }),
+      (error) => error === promotionError,
+    );
+
+    assert.equal(await fs.readFile(path.join(ctx.appDir, 'src', 'App.jsx'), 'utf8'), 'draft');
+    assert.equal(
+      await fs.readFile(path.join(ctx.polishCandidateDir, 'src', 'App.jsx'), 'utf8'),
+      'candidate',
+    );
+    await assert.rejects(fs.stat(ctx.draftAppDir), { code: 'ENOENT' });
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('polish promotion reports a sanitized recovery error when rollback also fails', async () => {
+  const {
+    createPolishCandidate,
+    promotePolishCandidate,
+  } = await loadPolisherModule();
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-polish-rollback-fail-'));
+  const ctx = await createRunContext(path.join(root, 'target'), {
+    runsRoot: path.join(root, 'runs'),
+  });
+  try {
+    await fs.mkdir(path.join(ctx.appDir, 'src'), { recursive: true });
+    await fs.writeFile(path.join(ctx.appDir, 'src', 'App.jsx'), 'draft');
+    await createPolishCandidate(ctx);
+    await fs.writeFile(path.join(ctx.polishCandidateDir, 'src', 'App.jsx'), 'candidate');
+    const promotionDetail = 'candidate failed at ' + ctx.appDir;
+    const rollbackDetail = 'rollback failed at ' + ctx.draftAppDir;
+    let renameCalls = 0;
+
+    await assert.rejects(
+      promotePolishCandidate(ctx, {
+        stat: fs.stat,
+        rm: fs.rm,
+        async rename(from, to) {
+          renameCalls += 1;
+          if (renameCalls === 1) return fs.rename(from, to);
+          if (renameCalls === 2) throw new Error(promotionDetail);
+          throw new Error(rollbackDetail);
+        },
+      }),
+      (error) => {
+        assert.equal(error.code, 'POLISH_ROLLBACK_FAILED');
+        assert.match(error.message, /draft retained.*recovery required/i);
+        assert.equal(error.message.includes(root), false);
+        assert.equal(error.message.includes(promotionDetail), false);
+        assert.equal(error.message.includes(rollbackDetail), false);
+        assert.equal(error.draftRetained, true);
+        assert.equal(error.recoveryRequired, true);
+        return true;
+      },
+    );
+
+    assert.equal(
+      await fs.readFile(path.join(ctx.draftAppDir, 'src', 'App.jsx'), 'utf8'),
+      'draft',
+    );
+    assert.equal(
+      await fs.readFile(path.join(ctx.polishCandidateDir, 'src', 'App.jsx'), 'utf8'),
+      'candidate',
+    );
+    await assert.rejects(fs.stat(ctx.appDir), { code: 'ENOENT' });
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('single-pass polisher applies bounded UI-only files to an isolated candidate', async () => {
+  const { POLISHER_SYSTEM, polish } = await loadPolisherModule();
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-polish-pass-'));
+  const ctx = await createRunContext(path.join(root, 'target'), {
+    runsRoot: path.join(root, 'runs'),
+  });
+  const calls = [];
+  try {
+    await fs.mkdir(path.join(ctx.appDir, 'src'), { recursive: true });
+    await fs.writeFile(path.join(ctx.appDir, 'src', 'App.jsx'), 'export default function App(){return draft}');
+    await fs.writeFile(path.join(ctx.appDir, 'src', 'styles.css'), '.app{padding:8px}');
+    await fs.writeFile(path.join(ctx.appDir, 'package.json'), '{private:true}');
+    for (const filename of ['quality-overview-desktop.png', 'quality-overview-mobile.png']) {
+      await fs.writeFile(path.join(ctx.qualityDir, filename), ONE_PIXEL_PNG);
+    }
+    const privateEndpoint = 'https://private.invalid/v1';
+    const privatePath = 'D:\\private\\vibe-secret\\quality.png';
+    await fs.writeFile(
+      path.join(ctx.appDir, 'src', 'private.js'),
+      `export const entry = '/src/main.jsx';
+export const icon = '/assets/icons/x.svg';
+export const cdn = 'https://cdn.example.com/image.png';
+export const localFile = 'C:\\Users\\private\\secret.txt';
+export const uncFile = '\\\\server\\share\\secret.txt';
+export const auth = 'Bearer polish-private-token';
+export const apiToken = 'sk-polish-private-token';`,
+    );
+    const evidence = {
+      spec: {
+        ...productPlanFixture(),
+        baseUrl: privateEndpoint,
+        apiKey: 'session-secret',
+        productDesign: { ...PRODUCT_DESIGN, endpoint: privateEndpoint },
+      },
+      uiQuality: {
+        summary: {
+          pass: false,
+          failures: [{
+            code: 'DENSITY_TOO_LOW',
+            page: '质量概览',
+            route: '/',
+            viewport: 'desktop',
+            detail: `cards are sparse ${privateEndpoint} ${privatePath} Error: hidden\n    at secret.js:1:1`,
+            screenshot: privatePath,
+            actualFile: privatePath,
+            stack: 'Error: hidden at secret.js:1:1',
+          }],
+        },
+      },
+      visualResults: [{
+        page: '质量概览',
+        score: 0.51,
+        threshold: 0.62,
+        structure: 0.58,
+        color: 0.42,
+        pass: false,
+        referenceImage: 'D:\\private\\reference-home.png',
+        actualFile: privatePath,
+      }],
+      screenshots: [
+        'quality-overview-desktop.png',
+        { filename: 'quality-overview-mobile.png' },
+        { filename: 'quality-overview-desktop.png' },
+      ],
+    };
+    const provider = {
+      async chat(request) {
+        calls.push(request);
+        return {
+          content: [
+            '=== FILE: src/App.jsx',
+            'export default function App(){return polished}',
+            '=== END ===',
+            '=== FILE: src/styles.css',
+            '.app{padding:16px}',
+            '=== END ===',
+          ].join('\n'),
+          usage: { prompt_tokens: 7, completion_tokens: 9 },
+        };
+      },
+    };
+
+    const changed = await polish(ctx, provider, evidence);
+    const textPart = calls[0].user.find((part) => part.type === 'text').text;
+    const imageParts = calls[0].user.filter((part) => part.type === 'image_url');
+
+    assert.deepEqual(changed, ['src/App.jsx', 'src/styles.css']);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].system, POLISHER_SYSTEM);
+    assert.match(POLISHER_SYSTEM, /hierarchy.*typography.*spacing.*density.*component consistency.*state presentation.*responsive/is);
+    assert.match(POLISHER_SYSTEM, /draft already passed every mechanical.*UI-quality.*state.*visual check/is);
+    assert.match(POLISHER_SYSTEM, /keep all unrelated content byte-for-byte.*never.*entire stylesheet/is);
+    assert.match(POLISHER_SYSTEM, /44px targets.*overflow.*contrast.*native-control styling.*responsive breakpoints.*required-state evidence/is);
+    assert.match(POLISHER_SYSTEM, /Do not add features\/routes\/dependencies\/network\/backend/);
+    assert.match(POLISHER_SYSTEM, /at most 4 files.*18,000 characters/is);
+    assert.match(textPart, /Approved spec.*Product Design/is);
+    assert.match(textPart, /数据密集型 B2B SaaS/);
+    assert.match(textPart, /Current model-authored source.*src\/App\.jsx.*draft/is);
+    assert.match(textPart, /quality-overview-desktop\.png.*quality-overview-mobile\.png/is);
+    assert.match(textPart, /DENSITY_TOO_LOW.*质量概览.*desktop.*cards are sparse/is);
+    assert.match(textPart, /score.*0\.51.*threshold.*0\.62/is);
+    assert.match(textPart, /reference-home\.png/);
+    assert.match(textPart, /'\/src\/main\.jsx'/);
+    assert.match(textPart, /'\/assets\/icons\/x\.svg'/);
+    assert.match(textPart, /'https:\/\/cdn\.example\.com\/image\.png'/);
+    assert.doesNotMatch(textPart, /private\.invalid|vibe-secret|session-secret|data:image|base64|secret\.js|Error: hidden|C:\\Users\\private|server\\share|polish-private-token|sk-polish/);
+    assert.equal(imageParts.length, 2);
+    assert.ok(imageParts.every((part) => /^data:image\/png;base64,/.test(part.image_url.url)));
+    assert.equal(await fs.readFile(path.join(ctx.appDir, 'src', 'App.jsx'), 'utf8'), 'export default function App(){return draft}');
+    assert.equal(await fs.readFile(path.join(ctx.polishCandidateDir, 'src', 'App.jsx'), 'utf8'), 'export default function App(){return polished}\n');
+    assert.equal(await fs.readFile(path.join(ctx.polishCandidateDir, 'src', 'styles.css'), 'utf8'), '.app{padding:16px}\n');
+    assert.equal(ctx.usage.promptTokens, 7);
+    assert.equal(ctx.usage.completionTokens, 9);
+    assert.equal(ctx.usage.calls, 1);
+    assert.deepEqual(ctx.events.map((event) => event.type), ['polish:start', 'polish:applied']);
+    assert.deepEqual(ctx.events.map((event) => event.summary), [
+      'applying one bounded UI polish pass',
+      '2 files applied to isolated candidate',
+    ]);
+    assert.doesNotMatch(JSON.stringify(ctx.events), /private\.invalid|vibe-secret|session-secret|base64|src\/App/);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('single-pass polisher rejects invalid model output before candidate writes', async () => {
+  const { polish } = await loadPolisherModule();
+  const cases = [
+    ['no files', 'not a file response', 'POLISH_OUTPUT_INVALID'],
+    ['forbidden file', '=== FILE: package.json\n{}\n=== END ===', 'POLISH_OUTPUT_LIMIT'],
+    ['too many files', Array.from({ length: 5 }, (_, index) => `=== FILE: src/${index}.js\nx\n=== END ===`).join('\n'), 'POLISH_OUTPUT_LIMIT'],
+    ['too many characters', `=== FILE: src/App.jsx\n${'x'.repeat(18_001)}\n=== END ===`, 'POLISH_OUTPUT_LIMIT'],
+  ];
+
+  for (const [name, content, code] of cases) {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-polish-invalid-'));
+    const ctx = await createRunContext(path.join(root, 'target'), {
+      runsRoot: path.join(root, 'runs'),
+    });
+    try {
+      await fs.mkdir(path.join(ctx.appDir, 'src'), { recursive: true });
+      await fs.writeFile(path.join(ctx.appDir, 'src', 'App.jsx'), 'draft');
+      let calls = 0;
+      await assert.rejects(
+        polish(ctx, {
+          async chat() {
+            calls += 1;
+            return { content, usage: {} };
+          },
+        }, { spec: productPlanFixture(), uiQuality: { pass: true }, screenshots: [] }),
+        (error) => error.code === code,
+        name,
+      );
+      assert.equal(calls, 1, name);
+      assert.equal(await fs.readFile(path.join(ctx.appDir, 'src', 'App.jsx'), 'utf8'), 'draft', name);
+      assert.deepEqual(await fs.readdir(ctx.polishCandidateDir), [], name);
+      assert.deepEqual(ctx.events.map((event) => event.type), ['polish:start'], name);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test('single-pass polisher propagates provider failure without success evidence', async () => {
+  const { polish } = await loadPolisherModule();
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-polish-provider-fail-'));
+  const ctx = await createRunContext(path.join(root, 'target'), {
+    runsRoot: path.join(root, 'runs'),
+  });
+  try {
+    await fs.mkdir(path.join(ctx.appDir, 'src'), { recursive: true });
+    await fs.writeFile(path.join(ctx.appDir, 'src', 'App.jsx'), 'draft');
+    const providerError = new Error('provider unavailable');
+
+    await assert.rejects(
+      polish(ctx, { chat: async () => { throw providerError; } }, {
+        spec: productPlanFixture(),
+        uiQuality: { pass: true },
+      }),
+      (error) => error === providerError,
+    );
+
+    assert.deepEqual(ctx.events.map((event) => event.type), ['polish:start']);
+    assert.equal(ctx.usage.calls, 0);
+    assert.equal(await fs.readFile(path.join(ctx.appDir, 'src', 'App.jsx'), 'utf8'), 'draft');
+    assert.deepEqual(await fs.readdir(ctx.polishCandidateDir), []);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('single-pass polisher rejects screenshot paths outside owned evidence directories', async () => {
+  const { polish } = await loadPolisherModule();
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-polish-evidence-jail-'));
+  const ctx = await createRunContext(path.join(root, 'target'), {
+    runsRoot: path.join(root, 'runs'),
+  });
+  let calls = 0;
+  try {
+    await fs.mkdir(path.join(ctx.appDir, 'src'), { recursive: true });
+    await fs.writeFile(path.join(ctx.appDir, 'src', 'App.jsx'), 'draft');
+    for (const filename of ['../outside.png', 'D:\\private\\outside.png', '/private/outside.png']) {
+      await assert.rejects(
+        polish(ctx, { chat: async () => { calls += 1; } }, {
+          spec: productPlanFixture(),
+          uiQuality: { pass: true },
+          screenshots: [filename],
+        }),
+        (error) => error.code === 'POLISH_EVIDENCE_INVALID',
+        filename,
+      );
+    }
+    assert.equal(calls, 0);
+    assert.deepEqual(ctx.events.map((event) => event.type), [
+      'polish:start',
+      'polish:start',
+      'polish:start',
+    ]);
+    assert.deepEqual(await fs.readdir(ctx.polishCandidateDir), []);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('single-pass polisher validates screenshot magic and uses the detected MIME type', async () => {
+  const { polish } = await loadPolisherModule();
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-polish-image-magic-'));
+  const ctx = await createRunContext(path.join(root, 'target'), {
+    runsRoot: path.join(root, 'runs'),
+  });
+  const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
+  const webp = Buffer.from([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50]);
+  let captured;
+  try {
+    await fs.mkdir(path.join(ctx.appDir, 'src'), { recursive: true });
+    await fs.writeFile(path.join(ctx.appDir, 'src', 'App.jsx'), 'draft');
+    await fs.writeFile(path.join(ctx.qualityDir, 'screen.png'), ONE_PIXEL_PNG);
+    await fs.writeFile(path.join(ctx.qualityDir, 'screen.jpg'), jpeg);
+    await fs.writeFile(path.join(ctx.qualityDir, 'screen.webp'), webp);
+    await polish(ctx, {
+      async chat(request) {
+        captured = request;
+        return { content: '=== FILE: src/App.jsx\npolished\n=== END ===', usage: {} };
+      },
+    }, {
+      spec: productPlanFixture(),
+      uiQuality: { pass: true },
+      screenshots: ['screen.png', 'screen.jpg', 'screen.webp'],
+    });
+    assert.deepEqual(
+      captured.user.filter((part) => part.type === 'image_url').map(
+        (part) => part.image_url.url.match(/^data:([^;]+);base64,/)[1],
+      ),
+      ['image/png', 'image/jpeg', 'image/webp'],
+    );
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('single-pass polisher rejects forged or extension-mismatched screenshots before provider use', async () => {
+  const { polish } = await loadPolisherModule();
+  for (const [filename, bytes] of [
+    ['forged.png', Buffer.from('not an image')],
+    ['mismatch.png', Buffer.from([0xff, 0xd8, 0xff, 0xd9])],
+  ]) {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-polish-forged-image-'));
+    const ctx = await createRunContext(path.join(root, 'target'), {
+      runsRoot: path.join(root, 'runs'),
+    });
+    let calls = 0;
+    try {
+      await fs.mkdir(path.join(ctx.appDir, 'src'), { recursive: true });
+      await fs.writeFile(path.join(ctx.appDir, 'src', 'App.jsx'), 'draft');
+      await fs.writeFile(path.join(ctx.qualityDir, filename), bytes);
+      await assert.rejects(
+        polish(ctx, { chat: async () => { calls += 1; } }, {
+          spec: productPlanFixture(),
+          uiQuality: { pass: true },
+          screenshots: [filename],
+        }),
+        (error) => error.code === 'POLISH_EVIDENCE_INVALID',
+        filename,
+      );
+      assert.equal(calls, 0, filename);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test('single-pass polisher rejects linked screenshot evidence before reading bytes', async () => {
+  const { polish } = await loadPolisherModule();
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-polish-linked-image-'));
+  const ctx = await createRunContext(path.join(root, 'target'), {
+    runsRoot: path.join(root, 'runs'),
+  });
+  const screenshot = path.join(ctx.qualityDir, 'linked.png');
+  let calls = 0;
+  let reads = 0;
+  try {
+    await fs.mkdir(path.join(ctx.appDir, 'src'), { recursive: true });
+    await fs.writeFile(path.join(ctx.appDir, 'src', 'App.jsx'), 'draft');
+    await fs.writeFile(screenshot, ONE_PIXEL_PNG);
+    await assert.rejects(
+      polish(ctx, { chat: async () => { calls += 1; } }, {
+        spec: productPlanFixture(),
+        uiQuality: { pass: true },
+        screenshots: ['linked.png'],
+      }, {
+        lstat: async (file) => file === screenshot
+          ? { isSymbolicLink: () => true }
+          : fs.lstat(file),
+        realpath: fs.realpath,
+        stat: fs.stat,
+        async readFile(file) {
+          reads += 1;
+          return fs.readFile(file);
+        },
+      }),
+      (error) => error.code === 'POLISH_EVIDENCE_UNSAFE',
+    );
+    assert.equal(calls, 0);
+    assert.equal(reads, 0);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('single-pass polisher removes a partial candidate when a patch write fails', async () => {
+  const { polish } = await loadPolisherModule();
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-polish-partial-write-'));
+  const ctx = await createRunContext(path.join(root, 'target'), {
+    runsRoot: path.join(root, 'runs'),
+  });
+  try {
+    await fs.mkdir(path.join(ctx.appDir, 'src'), { recursive: true });
+    await fs.writeFile(path.join(ctx.appDir, 'src', 'App.jsx'), 'draft');
+    await assert.rejects(
+      polish(ctx, {
+        chat: async () => ({
+          content: [
+            '=== FILE: src/first.js',
+            'first',
+            '=== END ===',
+            '=== FILE: src/App.jsx/child.js',
+            'second',
+            '=== END ===',
+          ].join('\n'),
+          usage: {},
+        }),
+      }, { spec: productPlanFixture(), uiQuality: { pass: true } }),
+    );
+    assert.equal(await fs.readFile(path.join(ctx.appDir, 'src', 'App.jsx'), 'utf8'), 'draft');
+    await assert.rejects(fs.stat(ctx.polishCandidateDir), { code: 'ENOENT' });
+    assert.deepEqual(ctx.events.map((event) => event.type), ['polish:start']);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('run context exposes owned quality and polish paths without precreating the draft', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-polish-context-'));
+  const ctx = await createRunContext(path.join(root, 'target'), {
+    runsRoot: path.join(root, 'runs'),
+  });
+  try {
+    assert.equal((await fs.stat(ctx.qualityDir)).isDirectory(), true);
+    assert.equal((await fs.stat(ctx.polishDir)).isDirectory(), true);
+    assert.equal((await fs.stat(ctx.polishCandidateDir)).isDirectory(), true);
+    await assert.rejects(fs.stat(ctx.draftAppDir), { code: 'ENOENT' });
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('config fixes polish rounds to one and rejects external expansion', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-polish-config-'));
+  const inputDir = path.join(root, 'input');
+  await fs.mkdir(inputDir, { recursive: true });
+  await fs.writeFile(path.join(inputDir, 'brief.md'), '# Demo');
+  try {
+    const defaults = await loadConfig(root, { apiKey: 'session-secret' });
+    assert.equal(defaults.maxPolishRounds, 1);
+    await fs.writeFile(
+      path.join(inputDir, 'constraints.json'),
+      JSON.stringify({ maxPolishRounds: 1 }),
+    );
+    assert.equal(
+      (await loadConfig(root, { apiKey: 'session-secret' })).maxPolishRounds,
+      1,
+    );
+    for (const invalid of [0, 2, -1, '1']) {
+      await fs.writeFile(
+        path.join(inputDir, 'constraints.json'),
+        JSON.stringify({ maxPolishRounds: invalid }),
+      );
+      await assert.rejects(
+        loadConfig(root, { apiKey: 'session-secret' }),
+        (error) => error.code === 'CONFIG_INVALID',
+      );
+    }
+    assert.doesNotMatch(
+      await fs.readFile(path.join(inputDir, 'constraints.json'), 'utf8'),
+      /session-secret/,
+    );
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
 });
 
 test('run context mirrors persisted events to an optional listener', async () => {
@@ -964,4 +2113,25 @@ test('reference discovery rejects manifest paths outside the references director
 
   await assert.rejects(discoverReferenceImages(inputDir), /REFERENCE_PATH_INVALID/);
   await fs.rm(root, { recursive: true, force: true });
+});
+
+test('representative SignalDesk and Atlas inputs cover three pages and five interactions', async () => {
+  for (const name of ['signaldesk', 'atlas-research']) {
+    const inputDir = path.join(PROJECT_ROOT, 'examples', name, 'input');
+    const brief = await fs.readFile(path.join(inputDir, 'brief.md'), 'utf8');
+    assert.match(brief, /3 个页面|three pages/i);
+    assert.match(brief, /至少 5 个交互场景|at least five/i);
+    assert.doesNotMatch(brief, /lorem ipsum|Card 1|Item A/i);
+  }
+  const references = await discoverReferenceImages(path.join(PROJECT_ROOT, 'examples', 'atlas-research', 'input'));
+  assert.ok(references.length >= 2);
+});
+
+test('README presents Product Studio and representative demos Chinese-first', async () => {
+  const readme = await fs.readFile(path.join(PROJECT_ROOT, 'README.md'), 'utf8');
+  assert.ok(readme.indexOf('## 为什么做 Vibe-one') < readme.indexOf('## English Overview'));
+  assert.match(readme, /Product Studio/);
+  assert.match(readme, /SignalDesk/);
+  assert.match(readme, /Atlas Research/);
+  assert.doesNotMatch(readme, /## 主演示[\s\S]{0,600}(Expense Tracker|Notes App)/i);
 });

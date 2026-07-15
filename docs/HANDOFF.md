@@ -1,6 +1,22 @@
 # Vibe-one Handoff (Fable5 -> Codex)
 
-Status: **Product Lab visual-input phase completed on 2026-07-11**.
+Status: **Product Studio quality redesign Tasks 1–15 and the Task 16 route-scoped state audit are complete; SignalDesk evidence is published, while Atlas remains below the quality gate.**
+
+## Current Product Studio handoff
+
+Completed and pushed on `feat/product-studio-quality`:
+
+- executable `productDesign`, 12-file / 24k builder contract, deterministic desktop/mobile UI audit;
+- one isolated bounded polish candidate with full build/content/interaction/UI/visual re-verification;
+- immutable design/quality/polish evidence APIs and referenced raster bundles;
+- Focus structured brief + ordered storyboard;
+- Flow production timeline + persistent page/device canvas + Quality Inspector;
+- responsive mutually exclusive drawers, Escape/focus return, reduced motion and 44px targets;
+- public-safe SignalDesk and Atlas Research representative inputs.
+
+Task 16 preflight and the local quality pipeline are green. Required states now use an executable `{ name, trigger, route, steps, expectText }` contract: the collector navigates to each same-origin route, performs the Playwright actions, verifies visible state evidence on desktop and mobile, and no longer repeats the global state list across every default page snapshot. The default suite passes 114 tests with 19 opt-in skips; the full no-API run exercised all 11 production scenarios, and the corrected route-scoped polish scenario passed after updating its expected screenshot count.
+
+The gateway required an approved client identifier, so Vibe-one now supports the optional process-only `VIBE_ONE_USER_AGENT`; no credential or endpoint is persisted. With `gpt-5.5`, SignalDesk completed one repair round, passed all 6/6 interactions, all 28 verification checks, all route-scoped loading/empty/error/success states on desktop/mobile, and the bounded polish candidate. Its sanitized report and six curated screenshots are published under `docs/demo-reports/signaldesk.md` and `docs/screenshots/signaldesk-*.png` (three desktop pages plus mobile queue, reviewed interaction, and mobile empty state). Atlas was then attempted with `gpt-5.5` and `gpt-5.6-luna`; both remained below the visual/UI delivery gate after bounded repair, so no Atlas artifact is published. The local image viewer could not open the PNGs under the Windows sandbox; mechanical evidence is complete, but human screenshot review remains an explicit follow-up before portfolio promotion.
 
 The original handoff asked Codex to capture a successful real run, prove a second demo, retain one failed-then-repaired report, and add screenshots to the repository. All four requirements now have committed evidence.
 
@@ -22,7 +38,7 @@ Both runs used `gpt-5.6-sol` through a configured OpenAI-compatible endpoint. Th
 3. Provider retries bounded network errors, 429 responses, and transient HTTP 500/502/503/504 responses.
 4. Chat completions stream by default and fall back to ordinary JSON responses when a gateway ignores streaming.
 5. Streaming uses a separate 10-minute default timeout so an active long response is not aborted by the 120-second non-streaming limit.
-6. Builder output is constrained to an MVP budget of at most 8 files and roughly 12,000 characters.
+6. Builder output retains the hard 12-file / 24,000-character contract, targets 18,000 characters and no more than six model-authored files, and passes a 6,000-token request cap when the gateway honors `max_tokens`.
 7. Planner-only runs exit with code 0 when their status is `planned`.
 8. Windows e2e tests canonicalize 8.3 temporary directory aliases before invoking Vite/Rollup.
 

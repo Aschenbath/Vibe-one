@@ -2,7 +2,7 @@
 // Uses global fetch (Node >= 20). Tracks usage metadata for the delivery report.
 
 export function createProvider(config) {
-  async function chat({ system, user, jsonMode = false }) {
+  async function chat({ system, user, jsonMode = false, maxTokens }) {
     const streamResponses = config.streamResponses !== false;
     const userContent = normalizeUserContent(user);
     const body = {
@@ -13,6 +13,7 @@ export function createProvider(config) {
         { role: 'user', content: userContent },
       ],
       ...(jsonMode ? { response_format: { type: 'json_object' } } : {}),
+      ...(Number.isInteger(maxTokens) && maxTokens > 0 ? { max_tokens: maxTokens } : {}),
       ...(streamResponses ? { stream: true, stream_options: { include_usage: true } } : {}),
     };
     const multimodal = Array.isArray(userContent)
@@ -30,6 +31,7 @@ export function createProvider(config) {
           headers: {
             'content-type': 'application/json',
             authorization: `Bearer ${config.apiKey}`,
+            ...(config.userAgent ? { 'user-agent': config.userAgent } : {}),
           },
           body: JSON.stringify(body),
           signal: AbortSignal.timeout(reqTimeout),

@@ -1,23 +1,39 @@
 import { STATUS_COPY, ERROR_COPY, EVENT_COPY } from './copy.js';
 import { createReferenceInputController } from './reference-input.js';
+import { createStudioState, reduceStudio, deriveStudioStage } from './studio-state.js';
+import { renderStudioInspector, renderStudioTimeline } from './studio-renderers.js';
 
-const state = {
+let state = {
+  ...createStudioState(),
   status: null,
   jobs: [],
-  selectedJob: null,
-  events: [],
   eventSource: null,
   activeEvidenceTab: 'preview',
   previewJobId: null,
   toastTimer: null,
   visualRequestSequence: 0,
+  inspectorTab: 'product',
+  canvasViewport: 'desktop',
+  canvasPage: '/',
+  studioEvidence: { design: { available: false }, quality: { available: false }, polish: { available: false } },
 };
+let drawerReturnFocus = null;
+
+function dispatch(action) {
+  state = reduceStudio(state, action);
+  return state;
+}
 
 const elements = {
   form: document.querySelector('#run-form'),
   title: document.querySelector('#title'),
   brief: document.querySelector('#brief'),
   briefCount: document.querySelector('#brief-count'),
+  productGoal: document.querySelector('#product-goal'),
+  targetUsers: document.querySelector('#target-users'),
+  coreFlows: [...document.querySelectorAll('[id^="core-flow-"]')],
+  visualDirection: document.querySelector('#visual-direction'),
+  presetButtons: [...document.querySelectorAll('[data-preset]')],
   baseUrl: document.querySelector('#base-url'),
   model: document.querySelector('#model'),
   apiKey: document.querySelector('#api-key'),
@@ -69,6 +85,17 @@ const elements = {
   settingsDrawer: document.querySelector('#settings-drawer'),
   historyToggle: document.querySelector('#history-toggle'),
   historyPanel: document.querySelector('#history-panel'),
+  productCanvas: document.querySelector('#product-canvas'),
+  canvasPage: document.querySelector('#canvas-page'),
+  viewportButtons: [...document.querySelectorAll('.viewport-switch [data-viewport]')],
+  openPreview: document.querySelector('#open-preview'),
+  inspectorTabs: [...document.querySelectorAll('[data-inspector-tab]')],
+  inspectorPanels: [...document.querySelectorAll('[data-inspector-panel]')],
+  inspectorProduct: document.querySelector('#inspector-product'),
+  inspectorDesign: document.querySelector('#inspector-design'),
+  inspectorQuality: document.querySelector('#inspector-quality'),
+  openTimeline: document.querySelector('#open-timeline'),
+  openInspector: document.querySelector('#open-inspector'),
 };
 
 const referenceInput = createReferenceInputController({
@@ -76,7 +103,10 @@ const referenceInput = createReferenceInputController({
   trigger: elements.referenceTrigger,
   dropzone: elements.referenceDropzone,
   list: elements.referenceList,
-  onChange: renderStatus,
+  onChange: () => {
+    updateBriefCount();
+    renderStatus();
+  },
   showError,
 });
 
@@ -140,17 +170,20 @@ async function launchJob() {
   try {
     await saveSession();
     await referenceInput.ready();
+    const brief = composeBrief();
+    if (brief.length > 100_000) throw new Error('产品任务书不能超过 100,000 个字符。');
     const job = await api('/api/jobs', {
       method: 'POST',
       body: JSON.stringify({
         title: elements.title.value,
-        brief: elements.brief.value,
+        brief,
         references: await referenceInput.payload(),
         mode: document.querySelector('input[name="mode"]:checked').value,
         baseUrl: elements.baseUrl.value.trim(),
         model: elements.model.value.trim(),
       }),
     });
+    dispatch({ type: 'JOB_STARTED', runId: job.id });
     state.jobs = [job, ...state.jobs.filter((item) => item.id !== job.id)];
     await selectJob(job.id);
     await loadStatus();
@@ -171,8 +204,8 @@ function connectEvents(id) {
 
   source.onmessage = (message) => {
     const payload = JSON.parse(message.data);
-    state.selectedJob = { ...state.selectedJob, ...payload.job };
-    if (payload.event) pushEvent(payload.event);
+    dispatch({ type: 'JOB_UPDATED', job: payload.job });
+    if (payload.event) dispatch({ type: 'EVENT_RECEIVED', event: payload.event });
     upsertJob(payload.job);
     render();
     if (payload.job.terminal) {
@@ -190,17 +223,20 @@ function connectEvents(id) {
 
 async function selectJob(id) {
   const job = await api(`/api/jobs/${encodeURIComponent(id)}`);
-  state.selectedJob = job;
-  state.events = [];
-  for (const event of job.events || []) pushEvent(event);
+  dispatch({ type: 'JOB_SELECTED', job });
+  dispatch({ type: 'EVENTS_REPLAYED', events: job.events || [] });
   state.previewJobId = null;
-  setWorkspaceView('flow');
+  state.canvasPage = '/';
+  state.inspectorTab = 'product';
+  state.studioEvidence = { design: { available: false }, quality: { available: false }, polish: { available: false } };
+  setWorkspaceView(state.mode);
   elements.previewFrame.src = 'about:blank';
   elements.previewFrame.hidden = true;
   elements.previewEmpty.hidden = false;
   upsertJob(job);
   render();
   loadActiveEvidence(job);
+  loadStudioEvidence(job);
   if (!job.terminal) connectEvents(id);
 }
 
@@ -208,11 +244,12 @@ async function refreshSelectedJob() {
   if (!state.selectedJob) return;
   try {
     const job = await api(`/api/jobs/${encodeURIComponent(state.selectedJob.id)}`);
-    state.selectedJob = job;
-    for (const event of job.events || []) pushEvent(event);
+    dispatch({ type: 'JOB_UPDATED', job });
+    dispatch({ type: 'EVENTS_REPLAYED', events: job.events || [] });
     upsertJob(job);
     render();
     loadActiveEvidence(job);
+    loadStudioEvidence(job);
     if (state.activeEvidenceTab === 'report' && job.hasReport) await loadReport();
   } catch (error) {
     showToast(error.message);
@@ -225,10 +262,11 @@ async function launchPreview() {
   elements.launchPreview.textContent = '正在启动…';
   try {
     const preview = await api(`/api/jobs/${encodeURIComponent(state.selectedJob.id)}/preview`, { method: 'POST' });
-    elements.previewFrame.src = preview.url;
+    elements.previewFrame.src = new URL(state.canvasPage || '/', preview.url).href;
     elements.previewFrame.hidden = false;
     elements.previewEmpty.hidden = true;
     state.previewJobId = state.selectedJob.id;
+    elements.openPreview.disabled = false;
   } catch (error) {
     showToast(error.message);
   } finally {
@@ -261,9 +299,23 @@ function bindEvents() {
     updateBriefCount();
     renderStatus();
   });
+  for (const input of [elements.productGoal, elements.targetUsers, ...elements.coreFlows, elements.visualDirection]) {
+    input.addEventListener('input', () => {
+      updateBriefCount();
+      renderStatus();
+    });
+  }
+  for (const button of elements.presetButtons) {
+    button.addEventListener('click', () => applyPreset(button.dataset.preset));
+  }
   elements.apiKey.addEventListener('input', renderStatus);
   elements.refreshEvidence.addEventListener('click', refreshSelectedJob);
   elements.launchPreview.addEventListener('click', launchPreview);
+  elements.openPreview.addEventListener('click', () => {
+    const url = elements.previewFrame.src;
+    if (url && url !== 'about:blank') window.open(url, '_blank', 'noopener,noreferrer');
+  });
+  elements.canvasPage.addEventListener('change', () => selectCanvasPage(elements.canvasPage.value));
   elements.settingsTrigger.addEventListener('click', () => elements.settingsDrawer.showModal());
   elements.historyToggle.addEventListener('click', () => {
     const expanded = elements.historyToggle.getAttribute('aria-expanded') === 'true';
@@ -272,16 +324,47 @@ function bindEvents() {
     elements.historyToggle.textContent = expanded ? '展开历史' : '收起历史';
   });
   for (const tab of elements.tabs) tab.addEventListener('click', () => activateTab(tab.dataset.tab));
+  for (const tab of elements.inspectorTabs) tab.addEventListener('click', () => activateInspectorTab(tab.dataset.inspectorTab));
+  for (const button of elements.viewportButtons) button.addEventListener('click', () => setCanvasViewport(button.dataset.viewport));
+  elements.openTimeline.addEventListener('click', () => toggleDrawer('timeline'));
+  elements.openInspector.addEventListener('click', () => toggleDrawer('inspector'));
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') closeDrawer();
+  });
+}
+
+function toggleDrawer(name) {
+  drawerReturnFocus = document.activeElement;
+  const current = document.body.dataset.drawer;
+  if (current === name) {
+    closeDrawer();
+    return;
+  }
+  const next = name;
+  if (next) document.body.dataset.drawer = next;
+  else delete document.body.dataset.drawer;
+  elements.openTimeline.setAttribute('aria-expanded', String(next === 'timeline'));
+  elements.openInspector.setAttribute('aria-expanded', String(next === 'inspector'));
+}
+
+function closeDrawer() {
+  if (!document.body.dataset.drawer) return;
+  delete document.body.dataset.drawer;
+  elements.openTimeline.setAttribute('aria-expanded', 'false');
+  elements.openInspector.setAttribute('aria-expanded', 'false');
+  drawerReturnFocus?.focus();
+  drawerReturnFocus = null;
 }
 
 function resetComposer() {
   state.eventSource?.close();
-  state.selectedJob = null;
-  state.events = [];
+  dispatch({ type: 'WORKSPACE_FOCUSED' });
   state.previewJobId = null;
   referenceInput.clear();
+  elements.form.reset();
+  updateBriefCount();
   clearError();
-  setWorkspaceView('focus');
+  setWorkspaceView(state.mode);
   render();
   elements.brief.focus();
 }
@@ -297,6 +380,52 @@ function activateTab(name) {
   if (name === 'report') loadReport();
   if (state.selectedJob && name === 'references') loadReferenceEvidence(state.selectedJob);
   if (state.selectedJob && name === 'visual') loadVisualEvidence(state.selectedJob).catch((error) => showToast(error.message));
+}
+
+function activateInspectorTab(name) {
+  state.inspectorTab = name;
+  for (const tab of elements.inspectorTabs) tab.setAttribute('aria-selected', String(tab.dataset.inspectorTab === name));
+  for (const panel of elements.inspectorPanels) panel.hidden = panel.dataset.inspectorPanel !== name;
+}
+
+function setCanvasViewport(viewport) {
+  state.canvasViewport = ['desktop', 'tablet', 'mobile'].includes(viewport) ? viewport : 'desktop';
+  elements.productCanvas.dataset.viewport = state.canvasViewport;
+  for (const button of elements.viewportButtons) button.setAttribute('aria-pressed', String(button.dataset.viewport === state.canvasViewport));
+}
+
+function selectCanvasPage(route) {
+  state.canvasPage = route || '/';
+  if (state.previewJobId !== state.selectedJob?.id || elements.previewFrame.hidden) return;
+  elements.previewFrame.src = new URL(state.canvasPage, elements.previewFrame.src).href;
+}
+
+function renderCanvasPages() {
+  if (!elements.canvasPage) return;
+  const pages = state.studioEvidence.design?.pages || [];
+  const options = pages.length ? pages : [{ name: '当前页面', route: '/' }];
+  elements.canvasPage.replaceChildren();
+  for (const page of options) {
+    const option = document.createElement('option');
+    option.value = page.route || '/';
+    option.textContent = page.name || page.route || '当前页面';
+    elements.canvasPage.append(option);
+  }
+  elements.canvasPage.value = options.some((page) => page.route === state.canvasPage) ? state.canvasPage : '/';
+}
+
+async function loadStudioEvidence(job) {
+  const id = encodeURIComponent(job.id);
+  const safe = (promise, fallback) => promise.catch(() => fallback);
+  const [design, quality, polish] = await Promise.all([
+    safe(api(`/api/jobs/${id}/design`), { available: false }),
+    safe(api(`/api/jobs/${id}/quality`), { available: false }),
+    safe(api(`/api/jobs/${id}/polish`), { available: false }),
+  ]);
+  if (state.selectedJob?.id !== job.id) return;
+  state.studioEvidence = { design, quality, polish };
+  renderCanvasPages();
+  renderEvidence();
 }
 
 function loadActiveEvidence(job) {
@@ -394,8 +523,60 @@ function renderStatus() {
   elements.keyHint.textContent = state.status?.hasApiKey ? '本次会话可用' : '未配置';
   const hasKey = Boolean(elements.apiKey.value.trim() || state.status?.hasApiKey);
   elements.launchRun.disabled = Boolean(active)
-    || (!elements.brief.value.trim() && !referenceInput.count())
+    || (!composeBrief().trim() && !referenceInput.count())
     || !hasKey;
+}
+
+function composeBrief() {
+  const flows = elements.coreFlows.map((input) => input.value.trim()).filter(Boolean);
+  const storyboard = referenceInput.storyboard();
+  const sections = [
+    ['产品目标', elements.productGoal.value],
+    ['目标用户', elements.targetUsers.value],
+    ['核心流程', flows.map((flow, index) => `${index + 1}. ${flow}`).join('\n')],
+    ['视觉方向', elements.visualDirection.value],
+    ['参考图 Storyboard', storyboard.map((item, index) => `${index + 1}. ${item.name} — ${item.role}`).join('\n')],
+    ['补充要求', elements.brief.value],
+  ];
+  return sections
+    .filter(([, value]) => value.trim())
+    .map(([heading, value]) => `## ${heading}\n${value.trim()}`)
+    .join('\n\n');
+}
+
+function applyPreset(name) {
+  const presets = {
+    signaldesk: {
+      title: 'SignalDesk 客服质检平台',
+      goal: '帮助客服运营团队发现、复核并处置高风险会话，交付可追踪的质检闭环。',
+      users: '客服运营主管与质检专员；桌面端高频使用，信息密度偏高。',
+      flows: ['筛选并搜索风险会话', '打开质检详情并查看证据', '分配负责人并标记复核'],
+      visual: '精密、克制、可信的数据密集型 B2B 工作台；冷灰画布、钴蓝操作色、紧凑表格与清晰状态。',
+    },
+    data: {
+      title: 'Pulseboard 数据运营平台',
+      goal: '把关键业务指标、异常变化和处置动作汇总为可执行的运营视图。',
+      users: '业务分析师与运营负责人；桌面端持续监控，信息密度紧凑。',
+      flows: ['查看指标趋势与异常', '切换维度并筛选数据', '创建并跟踪处置任务'],
+      visual: '编辑式数据产品，浅瓷色背景、石墨文字、清晰图表与克制强调色。',
+    },
+    atlas: {
+      title: 'Atlas Research 研究情报工作台',
+      goal: '让研究人员从资料检索、证据阅读到洞察沉淀形成连续工作流。',
+      users: '研究员与策略团队；需要长时间阅读、引用核对和知识整理。',
+      flows: ['搜索并筛选资料', '打开双栏阅读并切换引用', '保存洞察并整理集合'],
+      visual: '安静、理性、具有编辑感的 AI 知识工具；低饱和纸张色、清晰层级与舒适阅读密度。',
+    },
+  };
+  const preset = presets[name];
+  if (!preset) return;
+  if (!elements.title.value.trim()) elements.title.value = preset.title;
+  if (!elements.productGoal.value.trim()) elements.productGoal.value = preset.goal;
+  if (!elements.targetUsers.value.trim()) elements.targetUsers.value = preset.users;
+  elements.coreFlows.forEach((input, index) => { if (!input.value.trim()) input.value = preset.flows[index] || ''; });
+  if (!elements.visualDirection.value.trim()) elements.visualDirection.value = preset.visual;
+  updateBriefCount();
+  renderStatus();
 }
 
 function renderHistory() {
@@ -435,25 +616,7 @@ function renderJob() {
 }
 
 function renderStages(job) {
-  const stages = ['planning', 'building', 'verifying', 'visual', 'repairing', 'success'];
-  const reached = new Set();
-  for (const event of state.events) {
-    if (event.type.startsWith('plan:')) reached.add('planning');
-    if (event.type.startsWith('build:')) reached.add('building');
-    if (['cmd:start', 'cmd:done', 'preview:start', 'preview:ready', 'screenshot', 'scenario', 'review'].includes(event.type)) reached.add('verifying');
-    if (event.type.startsWith('visual:')) reached.add('visual');
-    if (event.type.startsWith('fix:') || event.type.startsWith('repair:')) reached.add('repairing');
-  }
-  if (job.status === 'success' || job.status === 'planned') reached.add('success');
-  const failedStage = job.status === 'failed'
-    ? (stages.includes(job.stage) ? job.stage : [...stages].reverse().find((stage) => reached.has(stage)) || 'planning')
-    : null;
-  for (const item of elements.stageTrack.querySelectorAll('li')) {
-    const stage = item.dataset.stage;
-    item.classList.toggle('active', !job.terminal && stage === job.stage);
-    item.classList.toggle('done', reached.has(stage) && stage !== failedStage);
-    item.classList.toggle('failed', stage === failedStage);
-  }
+  renderStudioTimeline(elements.stageTrack, { job, events: state.events, activeStage: deriveStudioStage(state) });
 }
 
 function renderEvents(job) {
@@ -482,6 +645,7 @@ function renderEvidence() {
   elements.shotCount.textContent = String(job?.screenshots?.length || 0);
   elements.repairCount.textContent = String(job?.repairCount || 0);
   elements.launchPreview.disabled = !job?.previewEligible;
+  elements.openPreview.disabled = state.previewJobId !== job?.id;
   elements.launchPreview.textContent = state.previewJobId === job?.id ? '重新启动预览' : '启动预览';
   elements.previewLabel.textContent = !job
     ? '选择一个成功完成的任务后，可在这里启动产品预览。'
@@ -490,6 +654,13 @@ function renderEvidence() {
       : job.terminal
         ? '当前任务没有可预览的成功构建。'
         : '构建验证通过后即可启动预览。';
+  renderStudioInspector({
+    productContainer: elements.inspectorProduct,
+    designContainer: elements.inspectorDesign,
+    qualityContainer: elements.inspectorQuality,
+    job,
+    ...state.studioEvidence,
+  });
   renderScreenshots(job);
   renderRepairs(job);
 }
@@ -537,11 +708,6 @@ function renderRepairs(job) {
   }
 }
 
-function pushEvent(event) {
-  const key = `${event.ts}|${event.type}|${event.summary || ''}`;
-  if (!state.events.some((item) => `${item.ts}|${item.type}|${item.summary || ''}` === key)) state.events.push(event);
-}
-
 function upsertJob(job) {
   const index = state.jobs.findIndex((item) => item.id === job.id);
   if (index === -1) state.jobs.unshift(job);
@@ -560,7 +726,7 @@ function setWorkspaceView(view) {
 }
 
 function updateBriefCount() {
-  elements.briefCount.textContent = `${elements.brief.value.length.toLocaleString()} / 100,000`;
+  elements.briefCount.textContent = `${composeBrief().length.toLocaleString()} / 100,000`;
 }
 
 function setConnection(online) {

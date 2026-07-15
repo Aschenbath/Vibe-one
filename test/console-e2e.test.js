@@ -24,6 +24,8 @@ test('console package command is registered', async () => {
 
 test('browser console keeps the Product Lab workspace responsive and accessible', { skip: !ENABLED, timeout: 60_000 }, async () => {
   const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-layout-')));
+  const artifacts = process.env.VIBE_ONE_CONSOLE_ARTIFACTS;
+  if (artifacts) await fs.mkdir(artifacts, { recursive: true });
   const app = createConsoleServer({ runsRoot: path.join(root, 'runs'), env: {} });
   const address = await app.listen(0);
   const browser = await chromium.launch();
@@ -35,7 +37,7 @@ test('browser console keeps the Product Lab workspace responsive and accessible'
       const rail = document.querySelector('#history-drawer').getBoundingClientRect();
       const main = document.querySelector('.product-lab').getBoundingClientRect();
       const focus = document.querySelector('#focus-workspace').getBoundingClientRect();
-      const brief = document.querySelector('#brief').getBoundingClientRect();
+      const brief = document.querySelector('#product-goal').getBoundingClientRect();
       const dropzone = document.querySelector('#reference-dropzone').getBoundingClientRect();
       return {
         historyCollapsed: document.querySelector('#history-toggle').getAttribute('aria-expanded') === 'false'
@@ -52,11 +54,12 @@ test('browser console keeps the Product Lab workspace responsive and accessible'
       historyCollapsed: true,
       railWidth: 72,
       focusCentered: true,
-      focusWidth: 1040,
+      focusWidth: 1180,
       inputAboveFold: true,
       dropzoneAboveFold: true,
       noHorizontalOverflow: true,
     });
+    if (artifacts) await desktop.screenshot({ path: path.join(artifacts, 'product-studio-focus.png') });
 
     const mobile = await browser.newPage({ viewport: { width: 390, height: 844 } });
     await mobile.goto(address.url);
@@ -101,6 +104,101 @@ test('browser console keeps the Product Lab workspace responsive and accessible'
   }
 });
 
+test('browser Focus composes a Product Studio brief and ordered storyboard', { skip: !ENABLED, timeout: 60_000 }, async () => {
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-focus-')));
+  const runsRoot = path.join(root, 'runs');
+  let submittedBrief = '';
+  let submittedReferences = [];
+  const pipeline = async ({ config }) => {
+    submittedBrief = config.brief;
+    submittedReferences = config.references;
+    const runDir = path.join(runsRoot, 'focus-brief-run');
+    await fs.mkdir(path.join(runDir, 'logs'), { recursive: true });
+    await fs.writeFile(path.join(runDir, 'logs', 'events.jsonl'), '', 'utf8');
+    await fs.writeFile(path.join(runDir, 'DELIVERY_REPORT.md'), '# Delivery Report\n- Status: **planned**\n', 'utf8');
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    config.onEvent({ ts: new Date().toISOString(), type: 'plan:done', summary: 'brief ready' });
+    return {
+      runId: 'focus-brief-run',
+      runDir,
+      status: 'planned',
+    };
+  };
+  const app = createConsoleServer({ runsRoot, pipeline, env: {} });
+  const address = await app.listen(0);
+  const browser = await chromium.launch();
+
+  try {
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    await page.goto(address.url);
+    await page.getByRole('button', { name: '运行设置' }).click();
+    await page.getByLabel('会话 API Key').fill('focus-secret');
+    await page.getByRole('button', { name: '完成' }).click();
+    await page.getByLabel('产品目标').fill('发现并处置高风险会话');
+    await page.getByRole('button', { name: '使用 SignalDesk 起点' }).click();
+    await dispatchReferenceFiles(page, ['overview.png', 'detail.png']);
+    await page.getByRole('button', { name: '将 detail.png 前移' }).click();
+    await page.getByLabel('detail.png 页面角色').fill('风险会话详情');
+    await page.getByRole('button', { name: '开始生成' }).click();
+    await page.locator('#active-status').filter({ hasText: '规划完成' }).waitFor();
+
+    assert.match(submittedBrief, /产品目标.*目标用户.*核心流程.*视觉方向/s);
+    assert.match(submittedBrief, /发现并处置高风险会话/);
+    assert.match(submittedBrief, /参考图 Storyboard[\s\S]*detail\.png.*风险会话详情/);
+    assert.deepEqual(submittedReferences.map((item) => item.name), ['detail.png', 'overview.png']);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+  } finally {
+    await browser.close();
+    await app.close();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('browser Studio Flow keeps mobile drawers accessible and mutually exclusive', { skip: !ENABLED, timeout: 60_000 }, async () => {
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-flow-mobile-')));
+  const runsRoot = path.join(root, 'runs');
+  const pipeline = async ({ config }) => {
+    const runDir = path.join(runsRoot, 'flow-mobile-run');
+    await fs.mkdir(path.join(runDir, 'logs'), { recursive: true });
+    await fs.writeFile(path.join(runDir, 'logs', 'events.jsonl'), '', 'utf8');
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    config.onEvent({ ts: new Date().toISOString(), type: 'plan:done', summary: 'brief ready' });
+    return { runId: 'flow-mobile-run', runDir, status: 'planned' };
+  };
+  const app = createConsoleServer({ runsRoot, pipeline, env: {} });
+  const address = await app.listen(0);
+  const browser = await chromium.launch();
+
+  try {
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    await page.goto(address.url);
+    await page.getByRole('button', { name: '运行设置' }).click();
+    await page.getByLabel('会话 API Key').fill('flow-mobile-secret');
+    await page.getByRole('button', { name: '完成' }).click();
+    await page.getByLabel('产品目标').fill('移动端抽屉验收');
+    await page.getByRole('button', { name: '开始生成' }).click();
+    await page.locator('#active-status').filter({ hasText: '规划完成' }).waitFor();
+
+    await page.getByRole('button', { name: '打开生产时间线' }).click();
+    assert.equal(await page.locator('body').getAttribute('data-drawer'), 'timeline');
+    await page.getByRole('button', { name: '打开 Inspector' }).click();
+    assert.equal(await page.locator('body').getAttribute('data-drawer'), 'inspector');
+    assert.equal(await page.locator('.studio-timeline').evaluate((node) => getComputedStyle(node).transform !== 'none'), true);
+    const undersized = await page.locator('button,a,input,textarea,select').evaluateAll((els) => els.filter((el) => {
+      const rect = el.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0 && (rect.width < 44 || rect.height < 44);
+    }).map((el) => `${el.tagName}#${el.id || ''}.${el.className || ''} ${Math.round(el.getBoundingClientRect().width)}x${Math.round(el.getBoundingClientRect().height)}`));
+    assert.deepEqual(undersized, []);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    await page.keyboard.press('Escape');
+    assert.equal(await page.locator('body').getAttribute('data-drawer'), null);
+  } finally {
+    await browser.close();
+    await app.close();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test('browser console submits a reference image and renders live evidence', { skip: !ENABLED, timeout: 60_000 }, async () => {
   const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-browser-')));
   const runsRoot = path.join(root, 'runs');
@@ -115,8 +213,10 @@ test('browser console submits a reference image and renders live evidence', { sk
   const previewAddress = previewServer.address();
   const previewUrl = `http://127.0.0.1:${previewAddress.port}/`;
 
+  let submittedBrief;
   let submittedReferences;
   const pipeline = async ({ config, planOnly }) => {
+    submittedBrief = config.brief;
     submittedReferences = config.references;
     const runId = 'console-demo-2026-07-11T08-00-00';
     const timestamp = '2026-07-11T08:00:00.000Z';
@@ -130,6 +230,17 @@ test('browser console submits a reference image and renders live evidence', { sk
     await fs.mkdir(path.join(runDir, 'logs'), { recursive: true });
     await fs.mkdir(path.join(runDir, 'screenshots'), { recursive: true });
     await fs.mkdir(path.join(runDir, 'app'), { recursive: true });
+    await fs.writeFile(path.join(runDir, 'design.json'), JSON.stringify({
+      available: true,
+      summary: 'SignalDesk 风险会话工作台',
+      pages: [
+        { name: '风险总览', route: '/', purpose: '查看风险分布' },
+        { name: '待办队列', route: '/queue', purpose: '筛选并处置会话' },
+      ],
+      scenarios: [],
+      acceptance: [],
+      productDesign: {},
+    }), 'utf8');
     for (const event of events) config.onEvent(event);
     await fs.copyFile(
       path.join(PROJECT_ROOT, 'docs', 'screenshots', 'expense-home.png'),
@@ -165,27 +276,27 @@ test('browser console submits a reference image and renders live evidence', { sk
     await page.getByRole('button', { name: '运行设置' }).click({ timeout: 1_000 });
     await page.getByLabel('会话 API Key').fill('stub-secret');
     await page.getByRole('button', { name: '完成' }).click();
-    await page.getByLabel('任务名称').fill('自由职业者记账产品');
-    await page.setInputFiles('#reference-input', {
-      name: 'home.png',
-      mimeType: 'image/png',
-      buffer: ONE_PIXEL_PNG,
-    });
-    await page.locator('#reference-list').filter({ hasText: 'home.png' }).waitFor({ timeout: 2_000 });
-    assert.equal(await page.getByLabel('需求描述').inputValue(), '');
+    await page.getByLabel('任务名称').fill('SignalDesk 客服质检平台');
+    await page.getByLabel('产品目标').fill('发现并处置高风险会话');
+    await page.getByRole('button', { name: '使用 SignalDesk 起点' }).click();
+    await dispatchReferenceFiles(page, ['overview.png', 'detail.png']);
+    await page.locator('#reference-list').filter({ hasText: 'detail.png' }).waitFor({ timeout: 2_000 });
+    await page.getByRole('button', { name: '将 detail.png 前移' }).click();
     await page.getByRole('button', { name: '开始生成' }).click();
     await page.locator('#active-status').filter({ hasText: '交付完成' }).waitFor();
-    assert.equal(submittedReferences.length, 1);
-    assert.equal(submittedReferences[0].name, 'home.png');
+    assert.match(submittedBrief, /产品目标[\s\S]*目标用户[\s\S]*核心流程[\s\S]*视觉方向/);
+    assert.deepEqual(submittedReferences.map((item) => item.name), ['detail.png', 'overview.png']);
     assert.match(await page.locator('#event-log').innerText(), /正在理解需求与参考图/);
     assert.equal(
-      await page.locator('[data-stage="repairing"]').evaluate((element) => element.classList.contains('done')),
+      await page.locator('[data-stage="quality"]').evaluate((element) => element.classList.contains('done')),
       false,
     );
 
+    await page.getByRole('tab', { name: '证据' }).click();
     await page.getByRole('tab', { name: '参考图' }).click();
     const liveReferenceText = await page.locator('#reference-evidence').innerText();
-    assert.match(liveReferenceText, /home\.png/);
+    assert.match(liveReferenceText, /detail\.png/);
+    assert.match(liveReferenceText, /overview\.png/);
     assert.doesNotMatch(liveReferenceText, /undefined/);
 
     await page.getByRole('tab', { name: '结果截图' }).click();
@@ -193,15 +304,17 @@ test('browser console submits a reference image and renders live evidence', { sk
     await page.getByRole('tab', { name: '交付报告' }).click();
     await page.locator('#report-content').filter({ hasText: 'Delivery Report' }).waitFor();
     await page.getByRole('tab', { name: '实时预览' }).click();
+    await page.locator('#canvas-page').selectOption('/queue');
     await page.getByRole('button', { name: '启动预览' }).click();
     await page.frameLocator('#preview-frame').getByText('生成产品预览').waitFor();
+    assert.match(await page.locator('#preview-frame').getAttribute('src'), /\/queue$/);
 
     const bodyText = await page.locator('body').innerText();
     assert.equal(bodyText.includes('stub-secret'), false);
     assert.equal(bodyText.includes('iVBOR'), false);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
     await page.locator('#run-started').evaluate((element) => { element.textContent = '7月11日 16:00'; });
-    await page.screenshot({ path: path.join(artifacts, 'console-desktop.png'), fullPage: true });
+    await page.screenshot({ path: path.join(artifacts, 'console-desktop.png') });
 
     const mobile = await browser.newPage({ viewport: { width: 390, height: 844 } });
     await mobile.goto(address.url);
@@ -210,12 +323,15 @@ test('browser console submits a reference image and renders live evidence', { sk
     await mobile.locator('#flow-workspace').waitFor();
     assert.equal(await mobile.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
     assert.equal(await mobile.locator('#new-run').isVisible(), true);
-    assert.equal(await mobile.getByRole('tab', { name: '实时预览' }).isVisible(), true);
     await mobile.getByRole('button', { name: '收起历史' }).click();
+    await mobile.getByRole('button', { name: '打开 Inspector' }).click();
+    await mobile.getByRole('tab', { name: '证据' }).click();
+    assert.equal(await mobile.getByRole('tab', { name: '实时预览' }).isVisible(), true);
+    await mobile.keyboard.press('Escape');
     await mobile.getByRole('button', { name: '启动预览' }).click();
     await mobile.frameLocator('#preview-frame').getByText('生成产品预览').waitFor();
     await mobile.locator('#run-started').evaluate((element) => { element.textContent = '7月11日 16:00'; });
-    await mobile.screenshot({ path: path.join(artifacts, 'console-mobile.png'), fullPage: true });
+    await mobile.screenshot({ path: path.join(artifacts, 'console-mobile.png') });
   } finally {
     await browser.close();
     await app.close();
@@ -383,6 +499,14 @@ test('browser console reconstructs persisted reference and visual evidence', { s
   async function assertEvidence(page) {
     await page.getByRole('button', { name: '展开历史' }).click();
     await page.locator('#run-history .history-item').filter({ hasText: 'visual history run' }).click();
+    await page.getByRole('navigation', { name: '生产时间线' }).waitFor();
+    await page.getByRole('main', { name: '作品画布' }).waitFor();
+    await page.getByRole('complementary', { name: '质量 Inspector' }).waitFor();
+    await page.getByRole('button', { name: '手机视口' }).click();
+    assert.equal(await page.locator('#product-canvas').getAttribute('data-viewport'), 'mobile');
+    await page.getByRole('tab', { name: 'UI 质量' }).click();
+    assert.match(await page.locator('#inspector-panel').innerText(), /44px/);
+    await page.getByRole('tab', { name: '证据' }).click();
     await page.getByRole('tab', { name: '参考图' }).click();
     await page.locator('#reference-evidence img').waitFor();
     assert.match(await page.locator('#reference-evidence').innerText(), /home\.png.*1×1/);
@@ -440,6 +564,7 @@ test('browser console reconstructs persisted reference and visual evidence', { s
       });
     });
     await page.locator('#run-history .history-item').filter({ hasText: 'visual history run' }).click();
+    await page.getByRole('tab', { name: '证据' }).click();
     await page.getByRole('tab', { name: '视觉比较' }).click();
     await page.locator('#visual-comparisons').filter({ hasText: '最新响应' }).waitFor();
     await page.waitForTimeout(300);

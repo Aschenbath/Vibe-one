@@ -7,6 +7,11 @@ import path from 'node:path';
 import { applyPatch, parseFileBlocks } from './builder.js';
 
 const DIAG_MARK = '=== DIAGNOSIS ===';
+export const UI_EVIDENCE_LIMITS = Object.freeze({
+  maxFiles: 8,
+  maxFileBytes: 8 * 1024 * 1024,
+  maxTotalBytes: 24 * 1024 * 1024,
+});
 const SYSTEM = `You are the fixer of a bounded app-replication pipeline.
 You get failing command output, failing review checks, AND the current source of the app.
 Fix the ACTUAL cause shown in the source - do not guess. A missing export means either
@@ -23,7 +28,12 @@ ${DIAG_MARK}
 
 Rules: return COMPLETE file contents (no diffs), touch as few files as possible, do not add dependencies unless the error proves one is missing.`;
 
-export async function fix(ctx, provider, { failure, round, visualFailures = [] }) {
+export async function fix(ctx, provider, {
+  failure,
+  round,
+  visualFailures = [],
+  uiFailures = [],
+}) {
   await ctx.logEvent('fix:start', { summary: `repair round ${round}` });
   const source = await gatherSource(ctx.appDir);
   const user = await createFixerUserContent({
@@ -31,6 +41,7 @@ export async function fix(ctx, provider, { failure, round, visualFailures = [] }
     failure,
     source,
     visualFailures,
+    uiFailures,
   });
 
   const { content, usage } = await provider.chat({ system: SYSTEM, user });
@@ -52,6 +63,7 @@ export async function createFixerUserContent({
   failure,
   source,
   visualFailures = [],
+  uiFailures = [],
 }) {
   const text = [
     `Repair round ${round}.`,
@@ -63,7 +75,8 @@ export async function createFixerUserContent({
     '',
     'Return corrected files.',
   ].join('\n');
-  if (!visualFailures.length) return text;
+  if (!visualFailures.length && !uiFailures.length) return text;
+  const uiEvidenceFiles = new Set(await validateUiEvidenceFiles(uiFailures));
 
   const parts = [{
     type: 'text',
@@ -75,7 +88,7 @@ export async function createFixerUserContent({
       'Current app source:',
       source,
       '',
-      'Fix each visual failure without breaking the build or verified interactions.',
+      'Fix each verification failure without breaking the build or verified interactions.',
     ].join('\n'),
   }];
   for (const item of visualFailures) {
@@ -86,15 +99,72 @@ export async function createFixerUserContent({
     parts.push(await fileImagePart(item.referenceFile, item.referenceType));
     parts.push(await fileImagePart(item.actualFile, 'image/png'));
   }
+  const attachedUiScreenshots = new Set();
+  for (const item of uiFailures) {
+    parts.push({
+      type: 'text',
+      text: `${formatUiFailure(item)}. Current generated UI screenshot follows.`,
+    });
+    if (
+      item.actualFile
+      && uiEvidenceFiles.has(item.actualFile)
+      && !attachedUiScreenshots.has(item.actualFile)
+    ) {
+      attachedUiScreenshots.add(item.actualFile);
+      parts.push(await fileImagePart(item.actualFile, 'image/png'));
+    }
+  }
   return parts;
 }
 
-async function fileImagePart(file, type) {
+async function fileImagePart(
+  file,
+  type,
+  maxBytes = UI_EVIDENCE_LIMITS.maxFileBytes,
+) {
   const bytes = await fs.readFile(file);
+  if (bytes.length > maxBytes) {
+    const error = new Error('FIXER_IMAGE_TOO_LARGE: repair image exceeds 8 MiB');
+    error.code = 'FIXER_IMAGE_TOO_LARGE';
+    throw error;
+  }
   return {
     type: 'image_url',
     image_url: { url: `data:${type};base64,${bytes.toString('base64')}` },
   };
+}
+
+export async function validateUiEvidenceFiles(uiFailures = []) {
+  const files = [...new Set(
+    uiFailures.map((failure) => failure?.actualFile).filter(Boolean),
+  )];
+  if (files.length > UI_EVIDENCE_LIMITS.maxFiles) {
+    throw uiEvidenceLimit('too many UI screenshots');
+  }
+
+  let totalBytes = 0;
+  for (const file of files) {
+    let stat;
+    try {
+      stat = await fs.stat(file);
+    } catch {
+      throw uiEvidenceLimit('UI screenshot is unavailable');
+    }
+    if (!stat.isFile() || stat.size > UI_EVIDENCE_LIMITS.maxFileBytes) {
+      throw uiEvidenceLimit('UI screenshot exceeds the per-file limit');
+    }
+    totalBytes += stat.size;
+    if (totalBytes > UI_EVIDENCE_LIMITS.maxTotalBytes) {
+      throw uiEvidenceLimit('UI screenshots exceed the aggregate limit');
+    }
+  }
+  return files;
+}
+
+function uiEvidenceLimit(detail) {
+  const error = new Error(`UI_EVIDENCE_LIMIT: ${detail}`);
+  error.code = 'UI_EVIDENCE_LIMIT';
+  return error;
 }
 
 // Reads the current model-authored source under appDir (skips node_modules,
@@ -146,7 +216,15 @@ function extractDiagnosis(text) {
 }
 
 // Renders failure evidence for the model from runner/reviewer results.
-export function describeFailure({ install, build, shots, scenarioResults, reviewResult, previewError }) {
+export function describeFailure({
+  install,
+  build,
+  shots,
+  scenarioResults,
+  reviewResult,
+  uiQuality,
+  previewError,
+}) {
   const parts = [];
   if (previewError) parts.push(`PREVIEW FAILED:\n${previewError}`);
   if (install && install.exitCode !== 0) {
@@ -159,6 +237,13 @@ export function describeFailure({ install, build, shots, scenarioResults, review
     parts.push(
       'REVIEW CHECKS FAILED:\n' +
         reviewResult.failed.map((c) => `- ${c.name}: ${c.detail}`).join('\n'),
+    );
+  }
+  const uiSummary = uiQuality?.summary ?? uiQuality ?? reviewResult?.uiQuality;
+  if (uiSummary?.failures?.length) {
+    parts.push(
+      'UI QUALITY AUDIT FAILED:\n'
+        + uiSummary.failures.map(formatUiFailure).join('\n'),
     );
   }
   if (scenarioResults?.some((r) => !r.pass)) {
@@ -181,4 +266,47 @@ export function describeFailure({ install, build, shots, scenarioResults, review
 
 function tail(text, n = 4000) {
   return String(text ?? '').slice(-n);
+}
+
+function formatUiFailure(failure) {
+  const safe = sanitizeUiFailure(failure);
+  return [
+    `- ${safe.code || 'UI_QUALITY_FAILED'}`,
+    `page=${safe.page || 'unknown'}`,
+    `route=${safe.route || 'unknown'}`,
+    `viewport=${safe.viewport || 'unknown'}`,
+    `detail=${safe.detail || 'failed'}`,
+    `screenshot=${safe.screenshot || 'unavailable'}`,
+  ].join(' | ');
+}
+
+export function sanitizeUiFailure(failure) {
+  return {
+    code: safeEvidenceText(failure?.code, 80),
+    page: safeEvidenceText(failure?.page, 120),
+    route: safeEvidenceText(failure?.route, 160),
+    viewport: safeEvidenceText(failure?.viewport, 40),
+    detail: safeEvidenceText(failure?.detail, 500),
+    screenshot: safeScreenshotName(failure?.screenshot),
+  };
+}
+
+function safeScreenshotName(value) {
+  const filename = path.posix.basename(path.win32.basename(String(value ?? '')));
+  return safeEvidenceText(filename, 160);
+}
+
+function safeEvidenceText(value, maxLength) {
+  return String(value ?? '')
+    .replace(
+      /(?:Error|TypeError|ReferenceError|SyntaxError|RangeError):[^\n]*(?:\n\s+at\s+[^\n]*)+/gu,
+      '[redacted stack]',
+    )
+    .replace(/data:[^;\s]+;base64,[A-Za-z0-9+/=]+/giu, '[redacted]')
+    .replace(/https?:\/\/[^\s]+/giu, '[redacted]')
+    .replace(/[A-Za-z]:[\\/][^\s]+/gu, '[redacted]')
+    .replace(/(^|\s)\/(?:[^/\s]+\/)+[^\s]+/gu, '$1[redacted]')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLength);
 }

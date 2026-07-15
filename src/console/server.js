@@ -18,6 +18,8 @@ const STATIC_FILES = new Map([
   ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
   ['/copy.js', ['copy.js', 'text/javascript; charset=utf-8']],
   ['/reference-input.js', ['reference-input.js', 'text/javascript; charset=utf-8']],
+  ['/studio-state.js', ['studio-state.js', 'text/javascript; charset=utf-8']],
+  ['/studio-renderers.js', ['studio-renderers.js', 'text/javascript; charset=utf-8']],
 ]);
 
 export function createConsoleServer({
@@ -55,6 +57,22 @@ export function createConsoleServer({
         202,
         await jobs.startJob(await readJson(req, { maxBytes: JOB_BODY_LIMIT })),
       );
+    }
+
+    const evidenceSummary = pathname.match(/^\/api\/jobs\/([^/]+)\/(design|quality|polish)$/);
+    if (evidenceSummary && req.method === 'GET') {
+      const [, id, resource] = evidenceSummary;
+      const runId = await artifactId(id);
+      if (resource === 'design') return sendJson(res, 200, await store.readDesign(runId));
+      if (resource === 'quality') return sendJson(res, 200, await store.readQuality(runId));
+      return sendJson(res, 200, await store.readPolish(runId));
+    }
+
+    const evidenceFile = pathname.match(/^\/api\/jobs\/([^/]+)\/artifacts\/([^/]+)\/(.+)$/);
+    if (evidenceFile && req.method === 'GET') {
+      const [, id, bucket, name] = evidenceFile;
+      const artifact = await store.readEvidence(await artifactId(id), bucket, name);
+      return sendBuffer(res, 200, artifact.data, artifact.type);
     }
 
     const match = pathname.match(/^\/api\/jobs\/([^/]+)(?:\/(events|report|preview|screenshots|references|visual)(?:\/(.+))?)?$/);

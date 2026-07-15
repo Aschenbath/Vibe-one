@@ -1,5 +1,13 @@
 // Reviewer: mechanical MVP checks. No model calls here - checks must be reproducible.
-export function review({ install, build, shots, spec, scenarioResults, visualResults = [] }) {
+export function review({
+  install,
+  build,
+  shots,
+  spec,
+  scenarioResults,
+  visualResults = [],
+  uiQuality = { pass: true, failures: [] },
+}) {
   const checks = [];
   const add = (name, pass, detail) => checks.push({ name, pass, detail });
 
@@ -56,6 +64,14 @@ export function review({ install, build, shots, spec, scenarioResults, visualRes
     add(`scenario passes: ${sc.name}`, !!res && res.pass, res ? res.error ?? 'ok' : 'scenario not executed');
   }
 
+  add(
+    'UI quality audit passes',
+    uiQuality.pass === true,
+    uiQuality.pass
+      ? 'all checks pass'
+      : `${uiQuality.failures?.length ?? 0} checks failing`,
+  );
+
   const failed = checks.filter((c) => !c.pass);
-  return { pass: failed.length === 0, checks, failed };
+  return { pass: failed.length === 0, checks, failed, uiQuality };
 }

@@ -24,10 +24,15 @@ export async function createRunContext(targetDir, config = {}) {
     screenshotsDir: path.join(runDir, 'screenshots'),
     referencesDir: path.join(runDir, 'references'),
     visualDir: path.join(runDir, 'visual'),
+    qualityDir: path.join(runDir, 'quality'),
+    polishDir: path.join(runDir, 'polish'),
   };
+  const polishCandidateDir = path.join(dirs.polishDir, 'candidate');
+  const draftAppDir = path.join(dirs.polishDir, 'draft-app');
   for (const dir of Object.values(dirs)) {
     await fs.mkdir(dir, { recursive: true });
   }
+  await fs.mkdir(polishCandidateDir, { recursive: true });
 
   const sourceReferences = path.join(
     config.inputDir || path.join(targetDir, 'input'),
@@ -59,5 +64,14 @@ export async function createRunContext(targetDir, config = {}) {
     usage.calls += 1;
   }
 
-  return { runId, ...dirs, events, logEvent, usage, addUsage };
+  return {
+    runId,
+    ...dirs,
+    polishCandidateDir,
+    draftAppDir,
+    events,
+    logEvent,
+    usage,
+    addUsage,
+  };
 }
