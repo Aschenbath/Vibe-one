@@ -78,7 +78,11 @@ export function renderProductDesign(value) {
     '',
     '### 核心状态 / Required States',
     '',
-    ...design.requiredStates.map((state) => `- **${state.name}:** ${state.trigger}`),
+    ...design.requiredStates.map((state) => [
+      `- **${state.name}** (\`${state.route}\`): ${state.trigger}`,
+      `  - Expected evidence: ${state.expectText}`,
+      `  - Steps: ${state.steps.length ? state.steps.map(renderStateStep).join(' -> ') : '(route only)'}`,
+    ].join('\n')),
     '',
     '### 响应式规则 / Responsive Rules',
     '',
@@ -105,6 +109,14 @@ function validateStates(states) {
       || !STATE_NAMES.has(state.name)
       || typeof state.trigger !== 'string'
       || state.trigger.trim().length < 4
+      || typeof state.route !== 'string'
+      || !state.route.startsWith('/')
+      || state.route.startsWith('//')
+      || state.route.includes('/:')
+      || !Array.isArray(state.steps)
+      || state.steps.some((step) => !isValidStateStep(step))
+      || typeof state.expectText !== 'string'
+      || !state.expectText.trim()
     ) {
       fail('requiredStates incomplete');
     }
@@ -113,6 +125,20 @@ function validateStates(states) {
   if (distinctNames.size < 2 || distinctNames.size !== states.length) {
     fail('requiredStates incomplete');
   }
+}
+
+function isValidStateStep(step) {
+  return isRecord(step)
+    && (step.action === 'click' || step.action === 'fill')
+    && typeof step.target === 'string'
+    && Boolean(step.target.trim())
+    && (step.action !== 'fill' || typeof step.value === 'string');
+}
+
+function renderStateStep(step) {
+  return step.action === 'fill'
+    ? `fill ${step.target} with ${step.value}`
+    : `click ${step.target}`;
 }
 
 function requireText(value, minLength, field) {

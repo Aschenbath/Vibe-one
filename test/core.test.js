@@ -69,9 +69,18 @@ const PRODUCT_DESIGN = {
     radii: ['4px', '8px', '12px'],
   },
   requiredStates: [
-    { name: 'loading', trigger: '首次加载质量概览时' },
-    { name: 'empty', trigger: '筛选条件没有匹配记录时' },
-    { name: 'success', trigger: '批量质检任务提交完成时' },
+    {
+      name: 'loading', trigger: '首次加载质量概览时', route: '/overview?state=loading',
+      steps: [], expectText: '正在加载质量数据',
+    },
+    {
+      name: 'empty', trigger: '筛选条件没有匹配记录时', route: '/queue',
+      steps: [{ action: 'fill', target: '搜索记录', value: 'missing' }], expectText: '没有匹配记录',
+    },
+    {
+      name: 'success', trigger: '批量质检任务提交完成时', route: '/queue',
+      steps: [{ action: 'click', target: '提交质检' }], expectText: '质检任务已提交',
+    },
   ],
 };
 
@@ -130,9 +139,9 @@ test('product design requires at least two distinct valid states', () => {
     () => validateProductDesign({
       ...PRODUCT_DESIGN,
       requiredStates: [
-        { name: 'loading', trigger: '首次加载质量概览时' },
-        { name: 'empty', trigger: '筛选条件没有匹配记录时' },
-        { name: 'loading', trigger: '刷新质量概览时' },
+        PRODUCT_DESIGN.requiredStates[0],
+        PRODUCT_DESIGN.requiredStates[1],
+        { ...PRODUCT_DESIGN.requiredStates[0], trigger: '刷新质量概览时' },
       ],
     }),
     (error) => error.code === 'PRODUCT_DESIGN_INVALID',
@@ -149,6 +158,9 @@ test('product design rejects incomplete lists, states, triggers, and token group
     ['blank responsiveRules', { responsiveRules: [' '] }],
     ['invalid state', { requiredStates: [{ name: 'idle', trigger: '等待任务开始时' }, PRODUCT_DESIGN.requiredStates[1]] }],
     ['short trigger', { requiredStates: [{ name: 'loading', trigger: '短' }, PRODUCT_DESIGN.requiredStates[1]] }],
+    ['missing state route', { requiredStates: [{ ...PRODUCT_DESIGN.requiredStates[0], route: '' }, PRODUCT_DESIGN.requiredStates[1]] }],
+    ['missing state evidence', { requiredStates: [{ ...PRODUCT_DESIGN.requiredStates[0], expectText: '' }, PRODUCT_DESIGN.requiredStates[1]] }],
+    ['invalid state step', { requiredStates: [{ ...PRODUCT_DESIGN.requiredStates[0], steps: [{ action: 'fill', target: '搜索记录' }] }, PRODUCT_DESIGN.requiredStates[1]] }],
     ['colors insufficient', { tokens: { ...PRODUCT_DESIGN.tokens, colors: { canvas: '#fff' } } }],
     ['typography insufficient', { tokens: { ...PRODUCT_DESIGN.tokens, typography: { body: '14px sans-serif' } } }],
     ['spacing insufficient', { tokens: { ...PRODUCT_DESIGN.tokens, spacing: ['4px'] } }],
@@ -182,6 +194,7 @@ test('builder prompt keeps model output within the gateway-friendly MVP budget',
   assert.match(BUILDER_SYSTEM, /CSS variables.*design tokens.*actually use/is);
   assert.match(BUILDER_SYSTEM, /realistic.*consistent mock data/is);
   assert.match(BUILDER_SYSTEM, /loading.*empty.*error.*success.*trigger/is);
+  assert.match(BUILDER_SYSTEM, /requiredStates.*route.*steps.*expectText/is);
   assert.match(BUILDER_SYSTEM, /44px.*targets/is);
   assert.match(BUILDER_SYSTEM, /style.*button.*input.*select.*number spinner/is);
   assert.match(BUILDER_SYSTEM, /responsive.*page boundaries/is);
@@ -460,6 +473,8 @@ test('planner validates product design and writes bilingual artifacts', async ()
     assert.match(PLANNER_SYSTEM, /at least 6 color tokens.*4 typography tokens.*5 spacing values.*3 radii/is);
     assert.match(PLANNER_SYSTEM, /at least 2 distinct states.*loading.*empty.*error.*success/is);
     assert.match(PLANNER_SYSTEM, /trigger.*at least 4 characters/is);
+    assert.match(PLANNER_SYSTEM, /requiredStates.*route.*steps.*expectText/is);
+    assert.match(PLANNER_SYSTEM, /deterministic.*without timing races/is);
     assert.match(PLANNER_SYSTEM, /density.*compact.*8 characters/is);
     assert.match(specMd, /产品设计 \/ Product Design/);
     assert.match(specMd, /客服运营主管/);

@@ -17,7 +17,7 @@ Given a product brief, output STRICT JSON with keys:
     contentStrategy: string
     tokens: { colors: object, typography: object, spacing: [string], radii: [string] }
     componentLanguage: [string]
-    requiredStates: [{ name, trigger }]
+    requiredStates: [{ name, trigger, route, steps: [{ action, target, value }], expectText }]
     responsiveRules: [string]
   }
   pages: [{ name, route, purpose, mustContain: [string], referenceImage: string|null }]
@@ -35,6 +35,7 @@ Keep the app small: mock data only, no backend, no auth. Do not invent features 
 Make productDesign values executable and product-specific, not generic phrases such as modern or clean.
 Provide at least 6 color tokens, 4 typography tokens, 5 spacing values, and 3 radii.
 requiredStates must contain at least 2 distinct states named loading, empty, error, or success; each trigger must be concrete and at least 4 characters.
+Every requiredStates item needs a concrete same-origin route (use seeded IDs, never :id placeholders), executable click/fill steps, and visible expectText. The verifier navigates to route, performs steps, and checks expectText on desktop and mobile. Each state must be deterministic without timing races; expose loading through an explicit route/query/control instead of a transient initial timeout. Empty steps are allowed only when the route itself deterministically selects the state.
 Core productDesign text must be concrete; density may be compact, otherwise describe it with at least 8 characters.
 Every mustContain fragment and every scenario.expectText must be something a correct implementation of THIS brief will actually render.`;
 

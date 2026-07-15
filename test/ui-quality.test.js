@@ -276,16 +276,22 @@ test('collector captures ordered desktop-mobile evidence and closes browser reso
       { runDir: root, logEvent: async () => {} },
       baseUrl,
       pages,
-      [{ name: 'loading' }],
+      [{
+        name: 'loading',
+        trigger: 'Open the green page loading fixture',
+        route: '/green',
+        steps: [],
+        expectText: '加载状态证据',
+      }],
     );
 
-    assert.deepEqual(evidence.results.map((result) => result.viewport), [
+    assert.deepEqual(evidence.results.slice(0, 4).map((result) => result.viewport), [
       'desktop',
       'mobile',
       'desktop',
       'mobile',
     ]);
-    assert.deepEqual(evidence.results.map((result) => result.page), [
+    assert.deepEqual(evidence.results.slice(0, 4).map((result) => result.page), [
       '风险队列',
       '风险队列',
       '健康概览',
@@ -294,9 +300,13 @@ test('collector captures ordered desktop-mobile evidence and closes browser reso
     for (const result of evidence.results.slice(0, 2)) {
       assert.ok(result.failures.some((failure) => failure.code === 'HIT_TARGET_TOO_SMALL'));
     }
-    assert.ok(evidence.results.slice(2).every((result) => result.pass));
+    assert.ok(evidence.results.slice(2, 4).every((result) => result.pass));
+    const stateResults = evidence.results.slice(4);
+    assert.equal(stateResults.length, 2);
+    assert.ok(stateResults.every((result) => result.page === 'State: loading'));
+    assert.ok(stateResults.every((result) => result.pass));
     const ignoredLabels = /祖先隐藏输入|禁用输入|禁用按钮/u;
-    for (const [index, result] of evidence.results.entries()) {
+    for (const [index, result] of evidence.results.slice(0, 4).entries()) {
       assert.equal(result.metrics.interactiveCount, 1);
       assert.equal(
         result.failures.filter((failure) => failure.code === 'HIT_TARGET_TOO_SMALL').length,
@@ -324,7 +334,12 @@ test('collector captures ordered desktop-mobile evidence and closes browser reso
     const names = new Set();
     for (const result of evidence.results) {
       assert.equal(path.basename(result.screenshot), result.screenshot);
-      assert.match(result.screenshot, /^quality-\d+-.+-(desktop|mobile)\.png$/u);
+      assert.match(
+        result.screenshot,
+        result.page.startsWith('State:')
+          ? /^quality-state-.+-(desktop|mobile)\.png$/u
+          : /^quality-\d+-.+-(desktop|mobile)\.png$/u,
+      );
       assert.equal(names.has(result.screenshot), false);
       names.add(result.screenshot);
       const file = path.join(root, 'quality', result.screenshot);

@@ -48,8 +48,14 @@ const E2E_PRODUCT_DESIGN = {
     radii: ['4px', '8px', '12px'],
   },
   requiredStates: [
-    { name: 'loading', trigger: 'Initial data is being prepared' },
-    { name: 'empty', trigger: 'No records match the active filters' },
+    {
+      name: 'loading', trigger: 'Initial data is being prepared', route: '/',
+      steps: [], expectText: 'Loading evidence ready',
+    },
+    {
+      name: 'empty', trigger: 'No records match the active filters', route: '/',
+      steps: [], expectText: 'Empty evidence ready',
+    },
   ],
 };
 
@@ -579,7 +585,10 @@ test('green draft is polished, fully reverified, and promoted before delivery', 
     assert.equal(result.errorCode, undefined);
     assert.equal(provider.observed.buildCalls, 1);
     assert.equal(provider.observed.polishCalls, 1);
-    assert.equal(provider.observed.polishImages, 2);
+    assert.equal(
+      provider.observed.polishImages,
+      2 + E2E_PRODUCT_DESIGN.requiredStates.length * 2,
+    );
     assert.match(provider.observed.polishText, /UI audit summary|Structured UI audit summary/i);
     assert.deepEqual(result.polish.changedFiles, ['src/App.jsx']);
     assert.equal(result.polish.status, 'promoted');

@@ -179,9 +179,14 @@ export async function collectUiQuality(
   });
   const qualityDir = ctx.qualityDir ?? path.join(ctx.runDir, 'quality');
   await fs.mkdir(qualityDir, { recursive: true });
-  const stateNames = requiredStates
-    .map((state) => typeof state === 'string' ? state : state?.name)
-    .filter(Boolean);
+  const stateSpecs = requiredStates.filter((state) => (
+    state
+    && typeof state === 'object'
+    && typeof state.name === 'string'
+    && typeof state.route === 'string'
+    && Array.isArray(state.steps)
+    && typeof state.expectText === 'string'
+  ));
   const { chromium } = await import('playwright');
   const browser = await chromium.launch();
   const results = [];
@@ -200,7 +205,7 @@ export async function collectUiQuality(
           const snapshot = await browserPage.evaluate(collectDomSnapshot, {
             pageSpec: { name: pageSpec.name, route },
             viewportName,
-            requiredStates: stateNames,
+            requiredStates: [],
           });
           const screenshot = [
             'quality',
@@ -238,6 +243,81 @@ export async function collectUiQuality(
           }
         } finally {
           if (browserPage) await browserPage.close();
+        }
+      }
+    }
+    for (const state of stateSpecs) {
+      for (const [viewportName, viewport] of Object.entries(UI_VIEWPORTS)) {
+        const browserPage = await browser.newPage({ viewport });
+        const pageName = `State: ${state.name}`;
+        const screenshot = [
+          'quality-state',
+          qualitySlug(state.name),
+          viewportName,
+        ].join('-') + '.png';
+        const screenshotFile = path.join(qualityDir, screenshot);
+        const result = {
+          page: pageName,
+          route: state.route,
+          viewport: viewportName,
+          pass: false,
+          failures: [],
+          metrics: {
+            scrollWidth: 0,
+            clientWidth: viewport.width,
+            interactiveCount: 0,
+            textSampleCount: 0,
+            screenshotBytes: 0,
+          },
+          screenshot,
+        };
+        try {
+          await browserPage.goto(localPreviewUrl(baseUrl, state.route), {
+            waitUntil: 'networkidle',
+            timeout: 30_000,
+          });
+          for (const step of state.steps) {
+            const locator = await resolveTarget(browserPage, step);
+            if (step.action === 'fill') {
+              await locator.fill(String(step.value ?? ''), { timeout: 5_000 });
+            } else {
+              await locator.click({ timeout: 5_000 });
+            }
+            await browserPage.waitForTimeout(300);
+          }
+          await browserPage.getByText(state.expectText, { exact: false }).first().waitFor({
+            state: 'visible',
+            timeout: 5_000,
+          });
+          result.pass = true;
+        } catch (error) {
+          result.failures.push({
+            code: 'STATE_UNREACHABLE',
+            page: pageName,
+            route: state.route,
+            viewport: viewportName,
+            detail: `${state.name}: ${String(error.message ?? error).split('\n')[0]}`,
+          });
+        } finally {
+          const dimensions = await browserPage.evaluate(() => ({
+            scrollWidth: Math.max(document.documentElement.scrollWidth, document.body?.scrollWidth ?? 0),
+            clientWidth: document.documentElement.clientWidth,
+          })).catch(() => ({ scrollWidth: 0, clientWidth: viewport.width }));
+          const png = await browserPage.screenshot({
+            path: screenshotFile,
+            type: 'png',
+            fullPage: true,
+          }).catch(() => null);
+          result.metrics.scrollWidth = dimensions.scrollWidth;
+          result.metrics.clientWidth = dimensions.clientWidth;
+          result.metrics.screenshotBytes = png?.length ?? 0;
+          await browserPage.close();
+        }
+        results.push(result);
+        if (ctx.logEvent) {
+          await ctx.logEvent('ui:state', {
+            summary: `${state.name} ${viewportName}: ${result.pass ? 'pass' : 'FAIL'}`,
+          });
         }
       }
     }

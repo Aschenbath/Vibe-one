@@ -47,6 +47,7 @@ Rules:
 - Define CSS variables from the approved design tokens and actually use those design tokens in components.
 - Use realistic, consistent mock data; never use lorem ipsum, Card 1, or Item A placeholders.
 - Implement loading, empty, error, and success states with concrete triggers from the approved product design.
+- Implement every productDesign.requiredStates route, steps, and expectText exactly; the verifier navigates to route, performs steps, and checks expectText on desktop and mobile.
 - Keep interactive controls as at least 44px targets and preserve responsive page boundaries without horizontal overflow.
 - Style every native button, input, select, and number spinner control.
 - Do not use Emoji as functional icons; use lucide-react icons where an icon is required.

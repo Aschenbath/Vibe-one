@@ -1,6 +1,6 @@
 # Vibe-one Handoff (Fable5 -> Codex)
 
-Status: **Product Studio quality redesign Tasks 1–15 completed; real showcase evidence is waiting on upstream API recovery.**
+Status: **Product Studio quality redesign Tasks 1–15 and the Task 16 route-scoped state audit are complete; real showcase evidence is waiting on upstream inference recovery.**
 
 ## Current Product Studio handoff
 
@@ -14,7 +14,9 @@ Completed and pushed on `feat/product-studio-quality`:
 - responsive mutually exclusive drawers, Escape/focus return, reduced motion and 44px targets;
 - public-safe SignalDesk and Atlas Research representative inputs.
 
-Task 16 preflight is green and a temporary OpenAI-compatible gateway was verified with real inference, but the representative SignalDesk runs still did not clear the delivery gate. `gpt-5.6-sol` repeatedly exceeded the 12-file / 24k-character builder contract; after builder request hardening, `gpt-5.6-luna` produced a valid four-file app but exhausted both repair rounds with three failed interactions and remaining UI failures. `gpt-5.5` then produced a valid four-file app whose six scenarios all passed through both repair rounds, but the UI audit still failed because product-level required states are currently checked as visible evidence on every page and viewport. No failed report or screenshot is published as showcase success. Before another paid run, redesign required-state evidence as executable, route-scoped checks instead of repeating the global state list across every default page snapshot; then rerun SignalDesk before Atlas.
+Task 16 preflight and the local quality pipeline are green. Required states now use an executable `{ name, trigger, route, steps, expectText }` contract: the collector navigates to each same-origin route, performs the Playwright actions, verifies visible state evidence on desktop and mobile, and no longer repeats the global state list across every default page snapshot. The default suite passes 114 tests with 19 opt-in skips; the full no-API run exercised all 11 production scenarios, and the corrected route-scoped polish scenario passed after updating its expected screenshot count.
+
+Real showcase publication is still blocked externally. Earlier `gpt-5.5` SignalDesk output produced a valid four-file app and passed all 6/6 interaction scenarios, but that run predated the route-scoped audit. On 2026-07-15, two fresh SignalDesk attempts failed before Planner completion on upstream HTTP 503, and minimal probes for `gpt-5.5`, `gpt-5.6-luna`, and `gpt-5.6-sol` returned the same `Service temporarily unavailable` response. No failed report or screenshot is published as showcase success. When inference recovers, rerun SignalDesk first; only after it clears every gate should Atlas run.
 
 The original handoff asked Codex to capture a successful real run, prove a second demo, retain one failed-then-repaired report, and add screenshots to the repository. All four requirements now have committed evidence.
 
