@@ -2,6 +2,10 @@
 
 Status: **Product Studio quality redesign Tasks 1–15 and the Task 16 route-scoped state audit are complete; SignalDesk evidence is published, while Atlas remains below the quality gate.**
 
+## 中文状态摘要
+
+Product Studio 与质量流水线工程阶段已经完成。真实 SignalDesk run 已通过 3 页面、6/6 交互、28 项机械检查、桌面/移动四类可执行状态、一次有界修复和 polish candidate 全量复验；中英双语报告与 6 张精选截图已经提交。Atlas 的两次真实多模态输出没有达到视觉/UI gate，因此没有把失败产物包装成主演示。当前公开结论是“SignalDesk 可展示，Atlas 仍是诚实的未达标边界”。
+
 ## Current Product Studio handoff
 
 Completed and pushed on `feat/product-studio-quality`:

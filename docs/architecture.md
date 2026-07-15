@@ -1,5 +1,11 @@
 # Architecture
 
+## 中文摘要 / Chinese Summary
+
+Vibe-one 的核心不是“让模型写页面”，而是把生成放进一条可验证、可回放、有硬边界的交付链：Planner 产出可执行产品规格，Builder 只能在固定 React/Vite 脚手架和文件预算内写源码，Runner 用真实 npm/Vite/Playwright 运行结果取证，Reviewer 只相信本地机械证据，Fixer 根据失败证据做有限轮修复，Polisher 只能在隔离候选中做一次最小改动并接受全量复验。
+
+安全边界包括固定 manifest/config、依赖白名单、`npm install --ignore-scripts`、模型路径 jail、同源预览路由、桌面/移动 UI audit、可选本地视觉分数、会话级凭证和不可变 evidence bundle。SignalDesk 已证明文字任务书路径可以真实交付；Atlas 的失败则证明视觉/UI gate 会拒绝未达标结果，而不是包装成成功。
+
 ## 当前流水线 / Current Pipeline
 
 ```text

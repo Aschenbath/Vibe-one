@@ -13,6 +13,25 @@
 
 SignalDesk 是一个小型、纯前端、模拟数据驱动的 AI 客服质检与运营平台。它提供运营总览、风险会话队列和质检详情 3 个页面，支持主管从风险指标进入高风险队列，检索会话，查看规则证据，分配负责人，标记复核并回到队列。
 
+## English Executive Summary
+
+SignalDesk is a compact, front-end-only AI customer-service quality and operations console backed by consistent mock data. This artifact came from a real model run rather than a hand-authored demo.
+
+| Evidence | Verified result |
+| --- | --- |
+| Product surface | 3 pages: Operations Overview, Conversation Queue, and QA Review Detail |
+| Functional flow | 6/6 Playwright scenarios passed, including filtering, search, evidence review, assignment, completion, and persisted return state |
+| Mechanical review | 28/28 delivery checks passed after one bounded repair round |
+| Executable states | loading, empty, error, and success passed on desktop and mobile routes |
+| Polish | One isolated CSS candidate passed full build/content/interaction/UI re-verification before promotion |
+| Safety | Fixed React/Vite scaffold, dependency allowlist, path jail, ignored lifecycle scripts, session-only credentials, and sanitized public evidence |
+
+The repair was evidence-driven and limited to `src/styles.css`: it restored 44px interaction targets and corrected low-contrast status text without changing routes, data, or product behavior. The model did not approve its own output; local build, browser, and audit results did.
+
+Published screenshots: [overview](../screenshots/signaldesk-overview.png), [queue](../screenshots/signaldesk-queue.png), [review detail](../screenshots/signaldesk-review.png), [mobile queue](../screenshots/signaldesk-queue-mobile.png), [completed review](../screenshots/signaldesk-reviewed.png), and [mobile empty state](../screenshots/signaldesk-empty-mobile.png).
+
+This proves a bounded text-to-product delivery path. It does not claim a production backend, real customer data, authentication, remote deployment, or human-equivalent visual judgment.
+
 ## 产品设计 / Product Design
 
 - Product type: 数据密集型 B2B SaaS 客服质检与运营控制台
