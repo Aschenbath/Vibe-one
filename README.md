@@ -2,163 +2,134 @@
 
 [![CI](https://github.com/Aschenbath/Vibe-one/actions/workflows/ci.yml/badge.svg)](https://github.com/Aschenbath/Vibe-one/actions/workflows/ci.yml)
 
-Vibe-one 是一条有明确边界的 AI 产品交付流水线：把产品任务书与参考截图转成可运行的 React + Vite 产品，并用本地构建、Playwright 交互、确定性 UI audit、参考图视觉比较和一次有界 polish 决定能否交付。
+**给它一份产品需求，它不只生成页面，还会自己把应用跑起来、点一遍、检查一遍；过不了就修，修不好就明确判定失败。**
 
-```text
-产品任务书 / 参考图
-  -> 产品与设计规格
-  -> 初稿生成
-  -> 构建 + 内容 + 交互 + UI audit
-  -> 视觉门禁（有参考图时）
-  -> 有界修复至首次全绿
-  -> 单次 polish candidate + 全量复验
-  -> 不可变证据 + Delivery Report
-```
+Vibe-one 是我做的本地 AI 前端交付工具。普通代码生成器通常在模型输出代码后就结束了，Vibe-one 继续完成真正影响交付的工作：安装依赖、构建项目、启动浏览器、执行用户操作、检查桌面与手机布局，再决定这个结果到底能不能交付。
 
-## 为什么做 Vibe-one / Why Vibe-one
+## 先看实际结果
 
-大模型可以快速写出页面，但“代码生成完成”不等于“产品可交付”。作品集真正需要证明的是：需求如何变成可执行规格，失败如何被本地证据发现，修复如何受边界约束，最终结果为什么值得相信。
-
-Vibe-one 因此坚持三条原则：
-
-1. **模型负责生成，本地规则负责判定。** 模型不能给自己打分。
-2. **所有循环有上限。** 文件数、输出字符、修复轮次、polish 文件和图片输入都受硬限制。
-3. **每个结论有证据。** 规格、命令、截图、UI audit、视觉分数、修复与最终报告都可回放。
-
-## English Overview
-
-Vibe-one is a bounded AI product-delivery system rather than a collection of hand-authored demo pages. It turns a structured product brief and optional reference screenshots into a runnable React + Vite application, then lets deterministic local evidence—not the model itself—decide whether the result can ship.
-
-**Current showcase status:**
-
-- **SignalDesk — verified and published.** A real `gpt-5.5` run delivered 3 pages, passed 6/6 Playwright scenarios and 28 mechanical checks, exposed loading/empty/error/success states on desktop and mobile, recovered through one bounded repair round, and promoted a fully re-verified polish candidate. The bilingual report and six curated screenshots are committed below.
-- **Atlas Research — intentionally not presented as a success.** Both real multimodal attempts completed planning and generation but remained below the visual/UI quality gates. Failed artifacts are not used as portfolio evidence.
-
-**Key engineering evidence:** schema-validated product design, fixed trusted scaffolding, a 12-file/24k-character builder boundary, dependency and path allowlists, desktop/mobile UI audits, optional local visual scoring, bounded repair, isolated polish promotion, session-only credentials, and immutable evidence bundles.
-
-## Product Studio / 产品工作台
-
-浏览器工作台分为 `Focus -> Flow`：
-
-- **Focus 产品任务书**：产品目标、目标用户、最多三个核心流程、视觉方向、补充约束和有序参考图 storyboard。
-- **Flow 生产时间线**：设计规格、初稿、构建、功能验收、UI 质量、视觉验收、成品抛光和交付。
-- **作品画布**：保留最近一次可用预览，可切换页面与桌面/平板/手机视口，不重新启动任务。
-- **Quality Inspector**：集中查看产品规格、design tokens、UI failures、视觉比较、polish 和 Delivery Report。
-- **窄屏查看**：画布保持主内容，时间线与 Inspector 变为互斥抽屉；可见交互目标至少 44px。
-
-```bash
-npm run console
-```
-
-| Focus 产品任务书 | Flow 作品画布与 Inspector |
-| --- | --- |
-| ![Product Studio Focus](docs/screenshots/product-studio-focus.png) | ![Product Studio Flow](docs/screenshots/console-desktop.png) |
-
-工作台默认只监听 loopback。浏览器填写的 API Key 仅保留在当前 Node.js 进程内；公开任务对象和持久化证据不包含 Key、上传 base64、私有 endpoint 或绝对路径。
-
-## 成品质量流水线 / Delivery Quality Pipeline
-
-| 阶段 | 本地成功条件 |
-| --- | --- |
-| Planner | `productDesign`、页面、场景、acceptance criteria 和参考图映射全部通过 schema 校验 |
-| Builder | 最多 12 个模型文件、约 24,000 字符；固定脚手架与依赖白名单 |
-| Functional review | build 成功、页面文本存在、Playwright 场景全部通过 |
-| UI quality audit | 桌面/移动无横向溢出；44px 目标；WCAG AA；语义层级、内容与状态完整 |
-| Visual gate | 有参考图时执行本地结构分 + RGB 颜色分，默认阈值 `0.62` |
-| Repair | 只根据失败证据做有界完整文件修复，轮次耗尽即失败 |
-| Polish | 首次全绿后在隔离候选中最多修改 4 个文件 / 18,000 字符；全量复验后才提升 |
-| Delivery | 发布不可变 evidence bundle 与中英双语 `DELIVERY_REPORT.md` |
-
-UI audit 证明的是可复现的完成度，不假装判断“审美”；视觉分数证明的是粗粒度结构与颜色相似度，不代表像素级复刻；最终作品截图仍需人工审查。
-
-## 主演示：SignalDesk / Primary Showcase: SignalDesk
-
-SignalDesk 是纯文字输入的 AI 客服质检与运营平台，用于证明没有参考图时也必须通过成品质量门禁。
-
-- 3 个页面：运营总览、会话队列、质检详情。
-- 6 个交互：风险筛选、搜索、清空筛选、打开详情、分配负责人、标记复核并返回。
-- 数据内容：SLA、满意度、风险会话、渠道、团队负载、规则命中、评分拆解和证据。
-- 输入：[examples/signaldesk/input/brief.md](examples/signaldesk/input/brief.md)
-
-**English evidence summary:** SignalDesk proves the text-only path end to end. The successful real run passed build, content, interaction, responsive UI, executable state, and polish gates; it is the repository's primary portfolio proof.
-
-真实 API 证据已通过质量 gate：报告见 [docs/demo-reports/signaldesk.md](docs/demo-reports/signaldesk.md)，最终页面截图如下（机械证据已通过；人工视觉复核仍是交付边界）：
+下面的 SignalDesk 不是手写演示页，而是 Vibe-one 根据一份文字需求生成的客服质检后台。最终结果通过了真实构建和浏览器验收。
 
 | 运营总览 | 会话队列 | 质检详情 |
 | --- | --- | --- |
-| ![SignalDesk overview](docs/screenshots/signaldesk-overview.png) | ![SignalDesk queue](docs/screenshots/signaldesk-queue.png) | ![SignalDesk review](docs/screenshots/signaldesk-review.png) |
+| ![SignalDesk 运营总览](docs/screenshots/signaldesk-overview.png) | ![SignalDesk 会话队列](docs/screenshots/signaldesk-queue.png) | ![SignalDesk 质检详情](docs/screenshots/signaldesk-review.png) |
 
-补充证据：移动端队列、完成复核后的真实交互结果，以及可执行的 empty 状态。
+这次运行的结果很直接：
 
-| 移动端队列 | 标记已复核并返回 | 移动端 empty 状态 |
-| --- | --- | --- |
-| ![SignalDesk mobile queue](docs/screenshots/signaldesk-queue-mobile.png) | ![SignalDesk reviewed](docs/screenshots/signaldesk-reviewed.png) | ![SignalDesk mobile empty](docs/screenshots/signaldesk-empty-mobile.png) |
+- 生成 3 个完整页面；
+- 6 个用户操作全部通过，包括搜索、筛选、打开详情、分配负责人和完成复核；
+- 28 项交付检查全部通过；
+- loading、empty、error、success 四种状态都在桌面和手机尺寸下真实触发并验证；
+- 第一版有按钮尺寸和文字对比度问题，工具根据失败证据自动修复一次，复验通过后才交付。
 
-## 多模态挑战：Atlas Research / Multimodal Challenge
+[用人话看完整案例](docs/signaldesk-case-study.md) · [查看机器生成的原始验收报告](docs/demo-reports/signaldesk.md)
 
-Atlas Research 是任务书 + 两张参考图的研究情报工作台，用于证明多模态页面映射、视觉门禁和证据修复链路。
+## 它和普通 AI 生成页面有什么区别？
 
-- 3 个页面：资料库、双栏阅读工作区、洞察集合。
-- 6 个交互：搜索资料、打开阅读、切换引用、保存洞察、筛选集合、收藏并返回。
-- 参考图进入 planner mapping、视觉比较和 repair evidence，而不是只展示在 UI 中。
-- 输入：[examples/atlas-research/input/brief.md](examples/atlas-research/input/brief.md)
+| 常见的 AI 页面生成 | Vibe-one |
+| --- | --- |
+| 模型说“完成了”就结束 | 本地构建和浏览器结果说了算 |
+| 生成的代码可以随意改配置、加依赖 | 脚手架固定，依赖和可写路径受限制 |
+| 截一张首页图当作成功 | 真正点击按钮、搜索、切换页面并检查状态 |
+| 出错后反复重试，容易越改越乱 | 修复次数有上限，每次修完都从头验收 |
+| 失败结果往往不会展示 | 没过质量线就明确拒绝交付 |
 
-**English status:** Atlas remains a transparent negative result, not a published showcase. The pipeline correctly rejected both real outputs because visual similarity and UI quality stayed below the configured delivery threshold.
+一句话概括：**模型负责写，本地程序负责验。**
 
-Atlas 的两次真实尝试均完成 Planner/Builder，但在视觉相似度与 UI 质量 gate 上失败（`gpt-5.5` 两轮修复后仍未达标，`gpt-5.6-luna` 在第二轮触发 evidence limit）。因此没有发布 Atlas 失败报告或截图；输入与两张公开安全参考图仍已通过本地 magic-byte、尺寸和路径 jail 校验。
+## 真正难的不是“让 AI 写 React”
 
-历史上的记账与笔记真实演示仍保留用于回归和 repair 案例，但不再作为主能力证明，见 [演示归档](docs/demos/archive.md)。
+### 1. 把模型输出当作不可信代码
 
-## 安全边界 / Safety Boundaries
+模型不能修改 `package.json`、Vite 配置、lockfile 或 npm 配置，也不能随便安装包。它只能在受控目录里写少量源码；路径越界、文件过多或内容过长都会被直接拒绝。依赖安装还会关闭 lifecycle scripts，避免生成代码借安装过程执行额外脚本。
 
-- 固定 `package.json` / Vite 配置；模型不能写 manifest、lockfile、npmrc 或配置文件。
-- 依赖固定白名单；安装使用 `npm install --ignore-scripts`。
-- 所有模型路径经过 `safeJoin`；拒绝绝对路径、遍历、链接和越界 evidence。
-- PNG/JPEG/WebP 最多 4 张，单张 6 MiB、总计 18 MiB；console 请求体最多 26 MiB。
-- Provider 对网络错误、429 和 500/502/503/504 做有界退避；耗尽后写安全失败报告。
-- 当前只生成响应式 React + Vite Web 产品；不包含远程托管、认证、多用户、并发任务或持久化凭证。
+Builder 默认只写 4 个模型文件，必要时最多 6 个；提示目标控制在 18,000 字符以内。程序层仍保留 12 文件 / 24,000 字符的硬上限，因为真实网关不一定会遵守 token 限制。
 
-## 快速开始 / Quick Start
+### 2. 证明应用是真的能用
+
+Vibe-one 不让模型给自己打分。它会在本机执行：
+
+```text
+npm install -> npm run build -> 启动 Vite -> Playwright 打开浏览器
+```
+
+然后按需求里的场景实际操作页面。例如 SignalDesk 的验收不是“页面里出现了按钮”，而是：搜索指定会话、打开详情、修改负责人、完成复核，再返回列表确认状态确实保留。
+
+同时还会检查手机端横向溢出、按钮点击尺寸、文字对比度、页面语义，以及 loading / empty / error / success 是否能通过指定操作真实出现。
+
+### 3. 防止自动修复把已经正确的地方改坏
+
+修复不是无限循环。每轮只接收明确的失败证据，轮数耗尽就停止。首次全部通过后，视觉润色也不会直接覆盖成品，而是在隔离副本中修改；只有重新通过构建、交互和 UI 检查，候选版本才会成为最终结果。
+
+这比“让模型继续优化一下”麻烦得多，但也正是生成代码从 demo 走向可交付工具时必须补上的部分。
+
+## 工作过程
+
+```text
+产品需求 / 参考图
+        ↓
+整理成页面、流程和验收条件
+        ↓
+在固定 React + Vite 项目中生成源码
+        ↓
+真实构建 + 浏览器操作 + 桌面/手机检查
+        ↓
+失败：限次修复并重新验收
+通过：隔离润色并再次完整验收
+        ↓
+截图 + 检查结果 + 交付报告
+```
+
+## 本地工作台
+
+除了命令行，项目还有一个只监听本机地址的 Product Studio。左侧填写产品目标、核心流程和参考图，右侧可以看生成进度、页面预览、手机/桌面视口和失败详情。
+
+| 填写需求 | 查看生成与验收过程 |
+| --- | --- |
+| ![Product Studio 输入界面](docs/screenshots/product-studio-focus.png) | ![Product Studio 运行界面](docs/screenshots/console-desktop.png) |
+
+浏览器中填写的 API Key 只保存在当前 Node.js 进程内，不写入项目文件、运行报告或公开接口。
+
+## 失败也算结果
+
+另一个带参考图的 Atlas Research 挑战没有通过最终视觉与 UI 检查，所以仓库没有把它包装成成功案例。这一点对项目很重要：Vibe-one 的价值不是保证模型每次都能做出好产品，而是让“不够好”变成可发现、可解释、会被拒绝的结果。
+
+目前项目只生成使用模拟数据的 React + Vite 前端，不包含真实后端、登录系统、多人协作或云端部署，也不宣称能代替人工审美判断。
+
+## 快速运行
+
+需要 Node.js 20+。
 
 ```bash
 npm install
 npx playwright install chromium
 npm test
-npm run test:console:e2e
+npm run console
 ```
 
-配置一个 OpenAI-compatible endpoint：
+连接任意 OpenAI-compatible 接口后，可以运行示例：
 
 ```powershell
 $env:VIBE_ONE_API_KEY = 'your-key'
-$env:VIBE_ONE_BASE_URL = 'https://your-openai-compatible-endpoint/v1'
+$env:VIBE_ONE_BASE_URL = 'https://your-endpoint.example/v1'
 $env:VIBE_ONE_MODEL = 'your-model-id'
-# Optional: only when the gateway requires an approved client identifier.
-$env:VIBE_ONE_USER_AGENT = 'approved-client/1.0'
-```
-
-```bash
 npm run demo:signaldesk
-npm run demo:atlas
-node src/cli/index.js plan examples/signaldesk
 ```
 
-完整无 API 集成测试会执行真实 npm install/build、Vite preview、Playwright 截图、UI repair、视觉 repair 和 polish：
+完整的无 API 集成测试会真实执行 npm、Vite 和 Playwright：
 
 ```bash
 VIBE_ONE_E2E=1 npm test
 ```
 
-## 运行产物 / Run Artifacts
+## English summary
 
-每次运行写入 `runs/<target>-<timestamp>/`：
+Vibe-one turns a product brief and optional reference images into a small React + Vite application, then verifies the result with real local builds, Playwright interactions, responsive UI checks, and bounded repair. The model writes code; deterministic local evidence decides whether the result can ship.
 
-| 产物 | 含义 |
-| --- | --- |
-| `SPEC.generated.md` / `PLAN.generated.md` | 产品设计、页面、场景与验证计划 |
-| `app/` / `draft/` / `polish-candidate/` | 最终应用、首次全绿初稿和隔离 polish 候选 |
-| `screenshots/` / `quality/` / `visual/` / `polish/` | 各阶段不可变图片与结构化结果 |
-| `logs/events.jsonl` | 持久化阶段事件 |
-| `DELIVERY_REPORT.md` | 双语命令、用量、失败、修复、质量与最终状态 |
+The published SignalDesk run generated three pages, passed 6/6 browser scenarios and 28/28 delivery checks, verified four executable UI states on desktop and mobile, and recovered from one evidence-driven repair. Atlas is kept as an honest rejected attempt because it did not meet the visual and UI gates.
 
-产品边界见 [FRAMEWORK.md](FRAMEWORK.md)，模块设计见 [docs/architecture.md](docs/architecture.md)，当前交接见 [docs/HANDOFF.md](docs/HANDOFF.md)。
+## 继续了解
+
+- [SignalDesk 案例：从需求到通过验收](docs/signaldesk-case-study.md)
+- [技术架构与安全边界](docs/architecture.md)
+- [产品范围与非目标](FRAMEWORK.md)
+- [早期演示归档](docs/demos/archive.md)

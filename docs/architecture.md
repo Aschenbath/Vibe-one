@@ -1,110 +1,70 @@
-# Architecture
+# 技术架构
 
-## 中文摘要 / Chinese Summary
+## 先说结论
 
-Vibe-one 的核心不是“让模型写页面”，而是把生成放进一条可验证、可回放、有硬边界的交付链：Planner 产出可执行产品规格，Builder 只能在固定 React/Vite 脚手架和文件预算内写源码，Runner 用真实 npm/Vite/Playwright 运行结果取证，Reviewer 只相信本地机械证据，Fixer 根据失败证据做有限轮修复，Polisher 只能在隔离候选中做一次最小改动并接受全量复验。
-
-安全边界包括固定 manifest/config、依赖白名单、`npm install --ignore-scripts`、模型路径 jail、同源预览路由、桌面/移动 UI audit、可选本地视觉分数、会话级凭证和不可变 evidence bundle。SignalDesk 已证明文字任务书路径可以真实交付；Atlas 的失败则证明视觉/UI gate 会拒绝未达标结果，而不是包装成成功。
-
-## 当前流水线 / Current Pipeline
+Vibe-one 的关键设计不是“多调用几个模型”，而是把模型放在一个受控位置：它可以提出产品方案、生成源码和修复文件，但不能决定自己是否成功，也不能随意改项目配置或在磁盘上乱写。
 
 ```text
-Focus brief + normalized references
-  -> Planner: productDesign + pages + scenarios + visual mapping
-  -> Builder: fixed React/Vite scaffold + bounded model files
-  -> Runner: build + preview + desktop/mobile Playwright evidence
-  -> Reviewer: content + interaction + deterministic UI audit
-  -> Visual gate: local structure/color score when references exist
-  -> bounded repair until first all-green draft
-  -> isolated single-pass polish candidate
-  -> full re-verification
-  -> immutable evidence bundle + bilingual Delivery Report
+输入需求
+   ↓
+Planner：整理页面、流程、状态和验收条件
+   ↓
+Builder：在固定脚手架里生成源码
+   ↓
+Runner：真实安装、构建、启动和截图
+   ↓
+Reviewer：检查内容、交互、桌面/手机 UI 和参考图
+   ↓
+失败 → Fixer 限次修复 → 回到 Runner
+通过 → Polisher 在隔离副本中修改 → 完整复验
+   ↓
+Reporter：保存结果和交付报告
 ```
 
-Product Studio keeps browser concerns separated: `studio-state.js` is the pure replay reducer, `studio-renderers.js` owns timeline/Inspector DOM rendering, and `app.js` retains fetch, EventSource, preview lifecycle, device/page selection and drawer interaction ownership.
+## 各模块负责什么
 
-## Data flow
+| 模块 | 职责 | 是否调用模型 |
+| --- | --- | --- |
+| `core/planner.js` | 把需求整理成页面、交互场景、状态触发方式和验收条件 | 是 |
+| `core/builder.js` | 写入固定脚手架，并接收受限的源码文件 | 是 |
+| `runner/commands.js` | 执行 npm、Vite、Playwright 和截图 | 否 |
+| `core/reviewer.js` | 根据运行结果判断内容和交互是否通过 | 否 |
+| `runner/uiQuality.js` | 在桌面和手机尺寸检查布局、控件、对比度和状态 | 否 |
+| `runner/visualCompare.js` | 有参考图时比较大体结构和颜色分布 | 否 |
+| `core/fixer.js` | 只根据失败证据生成修复文件 | 是 |
+| `core/polisher.js` | 在隔离候选中做一次受限的视觉优化 | 是 |
+| `reporter/deliveryReport.js` | 汇总命令、检查、修复和最终状态 | 否 |
 
-```text
-brief + normalized references + constraints
-        |
-        v
-   [Planner] --multimodal model--> product + visual spec --> SPEC.generated.md / PLAN.generated.md
-        |
-        v
-   [Builder] --model--> delimited file blocks --> runs/<id>/app/   (safeJoin path jail)
-        |
-        v
-   [Runner]  npm install -> npm run build -> vite preview -> Playwright screenshots
-        |
-        v
-   [Reviewer] mechanical checks + local SSIM/color-histogram visual gate
-        |                                   |
-        | pass                              | fail (round < maxRepairRounds)
-        v                                   v
-   [Reporter]                  [functional / visual fixer] --model--> patched files --> back to Runner
-```
+## 三个核心设计
 
-## Module contracts
+### 模型只能写业务源码
 
-| module | input | output | model calls |
-| --- | --- | --- | --- |
-| `core/config.js` | targetDir | merged config (constraints > env > defaults) | 0 |
-| `providers/openaiCompatible.js` | system + user prompts | streamed or JSON chat result + usage | 1 per request |
-| `core/planner.js` | brief + optional references | structured product/visual spec + markdown artifacts | 1 |
-| `core/builder.js` | brief + spec | fixed scaffold (package.json/vite.config) + model files under `app/` | 1 |
-| `runner/commands.js` | appDir | command records + screenshots + page text + scenario results | 0 |
-| `core/reviewer.js` | runner results + spec | `{ pass, checks[], failed[] }` incl. mustContain + scenarios | 0 |
-| `core/fixer.js` | failure evidence | patched files + diagnosis | 1 per round |
-| `runner/visualCompare.js` | mapped reference + generated screenshot | deterministic SSIM structure, color histogram, combined score | 0 |
-| `core/fixer.js` (visual mode) | failed visual evidence + current source | patched files + visual diagnosis | 1 per visual round |
-| `reporter/deliveryReport.js` | run context + results | `DELIVERY_REPORT.md` | 0 |
+`package.json` 和 Vite 配置由流水线自己生成。模型不能写 manifest、lockfile、npmrc、配置文件或 `node_modules`，也不能使用白名单外的依赖。每个输出路径都会通过 `safeJoin` 检查，绝对路径和 `..` 越界路径会被拒绝。
 
-## Local console flow
+Builder 默认被要求只输出 4 个文件，必要时最多 6 个，目标不超过 18,000 字符；本地验证器仍会硬拒绝超过 12 文件或 24,000 字符的响应。这样即使兼容接口忽略 `max_tokens`，模型也无法把无限内容写进应用目录。
 
-```text
-browser workspace
-    |  JSON commands + SSE events
-    v
-[console/server] -> [job manager] -> runPipeline()
-       |                 |
-       |                 +-> session-only credentials + one active job
-       |
-       +-> [run store] -> reports / screenshots / persisted history
-       |
-       +-> [preview manager] -> one owned Vite preview process
-```
+### 成功由浏览器证据决定
 
-| console module | responsibility |
-| --- | --- |
-| `console/server.js` | loopback HTTP routing, SSE clients, static assets, and shutdown |
-| `console/jobManager.js` | session config, validation, one-active-job state, event fan-out |
-| `console/runStore.js` | reconstruct public run metadata and jail report/screenshot reads |
-| `console/previewManager.js` | reuse one generated-app preview and stop it on replacement/shutdown |
-| `console/public/` | framework-free responsive browser workspace |
+Runner 会安装依赖、执行生产构建、启动可用端口上的 Vite preview，再由 Playwright 打开真实页面。Reviewer 使用这些结果检查关键文字和用户流程，不采用“请模型评价刚才生成得怎么样”这种自评方式。
 
-The console calls `runPipeline()` in process. It accepts text-only, screenshot-only, or combined input. PNG/JPEG/WebP references are limited to 4 files, 6 MiB each, 18 MiB total; the JSON request body is capped at 26 MiB. `runContext.logEvent()` persists each event to `events.jsonl` before mirroring it to the job manager, so browser delivery never replaces the durable audit trail.
+产品状态也不是要求每张静态截图同时出现 loading、empty、error 和 success。Planner 必须为每个状态给出路由、操作步骤和预期文字，验收器在对应页面执行步骤后检查结果。
 
-Visual evidence is written to `runs/<id>/visual/comparisons.json`: each round records reference/output mapping, score, structure/color subscores, threshold and pass/fail. The delivery report and repair records retain the bounded fixer trail. The default `0.62` threshold measures coarse visual consistency, not pixel-perfect cloning.
+### 修复和润色都不能绕过验收
 
-## Safety boundaries
+Fixer 只能在有限轮数内工作，每一轮都接收具体失败项。轮数耗尽后任务失败，不会静默继续重试。
 
-- **Path jail**: every model-provided path passes `safeJoin(appDir, path)`; absolute paths and `..` traversal throw.
-- **No script execution from model output**: `package.json` and `vite.config.js` are fixed templates written by the pipeline, not the model. The model cannot write any manifest/lockfile/npmrc/config (`FORBIDDEN_FILES`), dependencies are a fixed whitelist (react, react-dom, react-router-dom), and `npm install` runs with `--ignore-scripts` so no `postinstall`/lifecycle hook ever executes.
-- **Bounded repair**: at most `maxRepairRounds` fixer calls; exhaustion is recorded, never retried silently.
-- **Command timeouts + process-tree kill**: each spawned command has a hard timeout and its whole tree (npm shim -> node -> vite) is killed via `taskkill /T` on Windows.
-- **Free-port preview**: preview binds an OS-assigned free port, so stale processes or parallel runs never collide on 4173.
-- **Honest status**: `success` requires the mechanical reviewer to pass; fatal errors land in the report under "Fatal error".
-- **Token accounting**: every chat call's `usage` is accumulated on the run context and printed in the report.
-- **Run output root**: `runs/` is resolved from the project root (not `targetDir/../..`), overridable via `VIBE_ONE_RUNS_DIR` or `constraints.runsRoot`.
-- **Gateway resilience**: chat completions stream by default, retry network/429/500/502/503/504 failures within a hard budget, and use a separate 10-minute streaming timeout.
-- **Bounded model output**: the text-brief builder asks for at most 8 files and roughly 12,000 characters so a generated MVP stays inspectable and gateway-friendly.
-- **Loopback-only console**: the HTTP server binds `127.0.0.1` by default and does not expose the control plane to the LAN.
-- **Session-only secret**: browser-entered API keys stay in process memory, are removed from public job objects, and are never written into console inputs or run artifacts. Uploaded base64 exists only at the bounded request boundary; persisted manifests/public APIs contain metadata and jailed file URLs, not base64 or private absolute paths.
-- **Console artifact jail**: run IDs, reports, screenshots, and preview targets are resolved beneath the configured runs root; screenshot names are additionally jailed beneath each `screenshots/` directory.
-- **Single preview owner**: the console keeps at most one long-lived Vite preview and stops it when another run is opened or the server shuts down.
+首次全绿后，Polisher 修改的是单独的 `polish-candidate`。这个副本要重新通过构建、内容、交互、UI 和视觉检查；任何一项退化，原来的全绿版本都会保留。
 
-## Extension points (post-MVP)
+## 本地工作台的数据边界
 
-- Add finer typography/spacing analysis without replacing the deterministic gate with model self-grading.
-- Add more generated-app stacks only with equivalent scaffold, dependency, and path controls.
+Product Studio 默认监听 `127.0.0.1`，一次只运行一个生成任务，并只保留一个 Vite 预览进程。浏览器提交的 API Key 留在 Node.js 进程内；公开任务对象、事件日志、截图清单和报告都会移除 Key、上传图片的 base64、私有 endpoint 和绝对路径。
+
+参考图必须是 PNG、JPEG 或 WebP，最多 4 张，单张最多 6 MiB、总计最多 18 MiB。报告和截图读取也必须留在对应 run 目录中。
+
+## 视觉检查的边界
+
+本地视觉比较使用结构相似度和颜色直方图，只能判断大体布局和色彩是否接近，不能代替设计师判断，更不等于像素级复刻。UI audit 能发现可测量的问题，也不能证明页面一定“好看”。因此仓库同时保留机器报告和人工可查看的最终截图。
+
+## English summary
+
+The model is a constrained producer, not the judge. Fixed scaffolding, dependency allowlists, path jails, output budgets, real npm/Vite execution, Playwright scenarios, responsive state checks, bounded repair, and isolated polish promotion keep generation inside a verifiable local system. A result ships only when the complete deterministic verification path passes.

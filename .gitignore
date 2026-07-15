@@ -5,3 +5,6 @@ runs/*
 .worktrees/
 .env
 *.log
+history.md
+docs/HANDOFF.md
+docs/superpowers/
