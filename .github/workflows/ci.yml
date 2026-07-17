@@ -16,6 +16,7 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
-      # Offline unit tests only. The e2e integration test (FRONTEND_AUTOPILOT_E2E=1) needs a
-      # Playwright browser + npm registry and is run locally, not in CI.
+      - run: npx playwright install --with-deps chromium
+      # The default suite includes focused browser collector contracts. Full generated-app
+      # integration (FRONTEND_AUTOPILOT_E2E=1) remains opt-in and runs locally.
       - run: npm test
