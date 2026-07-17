@@ -1,6 +1,6 @@
 # 历史演示归档 / Demo Archive
 
-Vibe-one 早期使用记账与笔记应用验证基础流水线。它们仍是有效真实证据，但复杂度不足以作为 Product Studio 阶段的主演示。
+Frontend Autopilot 早期使用记账与笔记应用验证基础流水线。它们仍是有效真实证据，但复杂度不足以作为 Product Studio 阶段的主演示。
 
 ## 自由职业者记账应用
 

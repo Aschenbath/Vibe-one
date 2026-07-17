@@ -257,7 +257,7 @@ test('generated file limits reject excess and malformed model output with a stab
 
 test('build rejects over-limit output before writing any model-authored file', async () => {
   const { build } = await import('../src/core/builder.js');
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-builder-limit-order-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-builder-limit-order-'));
   const appDir = path.join(root, 'app');
   const events = [];
   let requestOptions;
@@ -440,7 +440,7 @@ test('planner content includes reference images and visual schema instructions',
 });
 
 test('planner validates product design and writes bilingual artifacts', async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-planner-product-design-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-planner-product-design-'));
   const events = [];
   const ctx = {
     runDir: root,
@@ -498,7 +498,7 @@ test('planner rejects missing or invalid product design before writing artifacts
     undefined,
     { ...PRODUCT_DESIGN, tone: '现代简洁' },
   ]) {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-planner-invalid-design-'));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-planner-invalid-design-'));
     const events = [];
     const spec = productPlanFixture();
     if (productDesign === undefined) delete spec.productDesign;
@@ -538,7 +538,7 @@ test('planner rejects missing or invalid product design before writing artifacts
 });
 
 test('planner rejects incomplete or unsafe visual mappings for reference jobs', async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-planner-visual-contract-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-planner-visual-contract-'));
   const reference = {
     name: 'home.png',
     type: 'image/png',
@@ -583,7 +583,7 @@ test('planner rejects incomplete or unsafe visual mappings for reference jobs', 
 });
 
 test('pipeline fails before build when a reference is not mapped by the planner', async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-pipeline-visual-contract-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-pipeline-visual-contract-'));
   const targetDir = path.join(root, 'target');
   let buildCalls = 0;
   const config = {
@@ -627,8 +627,8 @@ test('pipeline fails before build when a reference is not mapped by the planner'
 });
 
 test('pipeline returns PIPELINE_FAILED for an uncoded infrastructure exception', async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-pipeline-uncoded-'));
-  const privatePath = 'D:\\private\\vibe-secret\\artifact.txt';
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-pipeline-uncoded-'));
+  const privatePath = 'D:\\private\\frontend-autopilot-secret\\artifact.txt';
   const config = {
     stack: 'react-vite',
     viewport: { width: 390, height: 844 },
@@ -658,7 +658,7 @@ test('pipeline returns PIPELINE_FAILED for an uncoded infrastructure exception',
       'utf8',
     );
     assert.match(events, /"type":"fatal".*"summary":"PIPELINE_FAILED"/);
-    assert.doesNotMatch(events, /private\.invalid|vibe-secret|artifact\.txt/);
+    assert.doesNotMatch(events, /private\.invalid|frontend-autopilot-secret|artifact\.txt/);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
@@ -949,8 +949,8 @@ test('describeFailure includes build stderr and failed checks', () => {
 
 test('describeFailure includes safe structured UI audit evidence only', () => {
   const privateEndpoint = 'https://private.invalid/v1';
-  const windowsPath = 'D:\\private\\vibe-secret\\quality-overview-mobile.png';
-  const posixPath = '/private/vibe-secret/artifact.txt';
+  const windowsPath = 'D:\\private\\frontend-autopilot-secret\\quality-overview-mobile.png';
+  const posixPath = '/private/frontend-autopilot-secret/artifact.txt';
   const failure = {
     code: 'HIT_TARGET_TOO_SMALL',
     page: '总览',
@@ -979,12 +979,12 @@ test('describeFailure includes safe structured UI audit evidence only', () => {
   assert.match(text, /quality-overview-mobile\.png/);
   assert.doesNotMatch(
     text,
-    /private\.invalid|vibe-secret|D:\\|\/private\/|data:image|secret\.js|\n\s*at\s/u,
+    /private\.invalid|frontend-autopilot-secret|D:\\|\/private\/|data:image|secret\.js|\n\s*at\s/u,
   );
 });
 
 test('gatherSource collects app source and skips scaffold + node_modules', async () => {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-src-'));
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-src-'));
   await fs.mkdir(path.join(dir, 'src'), { recursive: true });
   await fs.mkdir(path.join(dir, 'node_modules', 'react'), { recursive: true });
   await fs.writeFile(path.join(dir, 'package.json'), '{"scaffold":true}');
@@ -1001,7 +1001,7 @@ test('gatherSource collects app source and skips scaffold + node_modules', async
 });
 
 test('visual repair content includes diagnostics, reference, and generated screenshot', async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-visual-fix-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-visual-fix-'));
   const reference = path.join(root, 'reference.png');
   const actual = path.join(root, 'actual.png');
   await fs.writeFile(reference, ONE_PIXEL_PNG);
@@ -1031,7 +1031,7 @@ test('visual repair content includes diagnostics, reference, and generated scree
 });
 
 test('UI repair content includes diagnostics and generated screenshots without reference labels', async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-ui-fix-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-ui-fix-'));
   const actual = path.join(root, 'quality-overview-mobile.png');
   await fs.writeFile(actual, ONE_PIXEL_PNG);
 
@@ -1054,7 +1054,7 @@ test('UI repair content includes diagnostics and generated screenshots without r
     assert.equal(content.filter((part) => part.type === 'image_url').length, 1);
     assert.match(content[0].text, /UI quality audit failed/);
     assert.match(content[1].text, /HIT_TARGET_TOO_SMALL.*总览.*mobile.*筛选 32x32/s);
-    assert.doesNotMatch(content[1].text, /Reference image follows|vibe-ui-fix-/);
+    assert.doesNotMatch(content[1].text, /Reference image follows|frontend-autopilot-ui-fix-/);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
@@ -1073,7 +1073,7 @@ test('UI repair evidence rejects more than the bounded screenshot count', async 
 });
 
 test('UI repair evidence rejects aggregate bytes before reading image content', async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-ui-evidence-limit-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-ui-evidence-limit-'));
   const files = [];
   try {
     for (let index = 0; index < 4; index += 1) {
@@ -1093,9 +1093,9 @@ test('UI repair evidence rejects aggregate bytes before reading image content', 
 });
 
 test('delivery report records input references and visual score history', async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-visual-report-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-visual-report-'));
   const privateEndpoint = 'https://private.invalid/v1';
-  const privatePath = 'D:\\private\\vibe-secret\\artifact.txt';
+  const privatePath = 'D:\\private\\frontend-autopilot-secret\\artifact.txt';
   const ctx = {
     runId: 'visual-run',
     runDir: root,
@@ -1136,15 +1136,15 @@ test('delivery report records input references and visual score history', async 
   assert.match(report, /### Round 0[\s\S]*0\.5400 \/ 0\.6200/);
   assert.match(report, /### Round 1[\s\S]*0\.7812 \/ 0\.6200/);
   assert.doesNotMatch(report, /Visual similarity to any reference is not scored/);
-  assert.doesNotMatch(report, /private\.invalid|vibe-secret/);
-  assert.doesNotMatch(events, /vibe-visual-report-|vibe-secret|private\.invalid/);
+  assert.doesNotMatch(report, /private\.invalid|frontend-autopilot-secret/);
+  assert.doesNotMatch(events, /frontend-autopilot-visual-report-|frontend-autopilot-secret|private\.invalid/);
   await fs.rm(root, { recursive: true, force: true });
 });
 
 test('delivery report writes bilingual safe evidence and structured sidecars', async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-bilingual-report-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-bilingual-report-'));
   const privateEndpoint = 'https://private.invalid/v1';
-  const privatePath = 'D:/private/vibe-secret/artifact.txt';
+  const privatePath = 'D:/private/frontend-autopilot-secret/artifact.txt';
   const privateImage = 'data:image/png;base64,private-image';
   const privateCredential = 'sk-report-private-1234567890';
   const ctx = {
@@ -1291,7 +1291,7 @@ test('delivery report writes bilingual safe evidence and structured sidecars', a
   assert.deepEqual(polish.recovery, { draftRetained: true, recoveryRequired: true });
 
   const publicEvidence = [report, JSON.stringify(design), JSON.stringify(quality), JSON.stringify(polish), JSON.stringify(ctx.events)].join('\n');
-  assert.doesNotMatch(publicEvidence, /private\.invalid|vibe-secret|session-secret|data:image|base64|private-image|artifact\.txt|sk-report-private|Bearer\s+sk-report-private|srv\/private\/key|server\/share\/key/i);
+  assert.doesNotMatch(publicEvidence, /private\.invalid|frontend-autopilot-secret|session-secret|data:image|base64|private-image|artifact\.txt|sk-report-private|Bearer\s+sk-report-private|srv\/private\/key|server\/share\/key/i);
   assert.deepEqual((await fs.readdir(root)).filter((name) => name.includes('.tmp-')), []);
   await fs.rm(root, { recursive: true, force: true });
 });
@@ -1355,7 +1355,7 @@ test('polish file validation reuses the builder path jail', async () => {
 
 test('polish candidate copies trusted source without disposable build caches', async () => {
   const { createPolishCandidate } = await loadPolisherModule();
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-polish-copy-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-polish-copy-'));
   const ctx = await createRunContext(path.join(root, 'target'), {
     runsRoot: path.join(root, 'runs'),
   });
@@ -1388,7 +1388,7 @@ test('polish candidate copies trusted source without disposable build caches', a
 
 test('polish candidate rejects source links before deleting or copying', async () => {
   const { createPolishCandidate } = await loadPolisherModule();
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-polish-link-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-polish-link-'));
   const ctx = await createRunContext(path.join(root, 'target'), {
     runsRoot: path.join(root, 'runs'),
   });
@@ -1429,7 +1429,7 @@ test('polish promotion retains the prior app as the owned draft', async () => {
     createPolishCandidate,
     promotePolishCandidate,
   } = await loadPolisherModule();
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-polish-promote-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-polish-promote-'));
   const ctx = await createRunContext(path.join(root, 'target'), {
     runsRoot: path.join(root, 'runs'),
   });
@@ -1453,7 +1453,7 @@ test('polish promotion retains the prior app as the owned draft', async () => {
 
 test('polish promotion with a missing candidate leaves the app untouched', async () => {
   const { promotePolishCandidate } = await loadPolisherModule();
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-polish-missing-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-polish-missing-'));
   const ctx = await createRunContext(path.join(root, 'target'), {
     runsRoot: path.join(root, 'runs'),
   });
@@ -1478,7 +1478,7 @@ test('polish promotion restores the app when candidate promotion fails', async (
     createPolishCandidate,
     promotePolishCandidate,
   } = await loadPolisherModule();
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-polish-rollback-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-polish-rollback-'));
   const ctx = await createRunContext(path.join(root, 'target'), {
     runsRoot: path.join(root, 'runs'),
   });
@@ -1520,7 +1520,7 @@ test('polish promotion reports a sanitized recovery error when rollback also fai
     createPolishCandidate,
     promotePolishCandidate,
   } = await loadPolisherModule();
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-polish-rollback-fail-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-polish-rollback-fail-'));
   const ctx = await createRunContext(path.join(root, 'target'), {
     runsRoot: path.join(root, 'runs'),
   });
@@ -1572,7 +1572,7 @@ test('polish promotion reports a sanitized recovery error when rollback also fai
 
 test('single-pass polisher applies bounded UI-only files to an isolated candidate', async () => {
   const { POLISHER_SYSTEM, polish } = await loadPolisherModule();
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-polish-pass-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-polish-pass-'));
   const ctx = await createRunContext(path.join(root, 'target'), {
     runsRoot: path.join(root, 'runs'),
   });
@@ -1586,7 +1586,7 @@ test('single-pass polisher applies bounded UI-only files to an isolated candidat
       await fs.writeFile(path.join(ctx.qualityDir, filename), ONE_PIXEL_PNG);
     }
     const privateEndpoint = 'https://private.invalid/v1';
-    const privatePath = 'D:\\private\\vibe-secret\\quality.png';
+    const privatePath = 'D:\\private\\frontend-autopilot-secret\\quality.png';
     await fs.writeFile(
       path.join(ctx.appDir, 'src', 'private.js'),
       `export const entry = '/src/main.jsx';
@@ -1675,7 +1675,7 @@ export const apiToken = 'sk-polish-private-token';`,
     assert.match(textPart, /'\/src\/main\.jsx'/);
     assert.match(textPart, /'\/assets\/icons\/x\.svg'/);
     assert.match(textPart, /'https:\/\/cdn\.example\.com\/image\.png'/);
-    assert.doesNotMatch(textPart, /private\.invalid|vibe-secret|session-secret|data:image|base64|secret\.js|Error: hidden|C:\\Users\\private|server\\share|polish-private-token|sk-polish/);
+    assert.doesNotMatch(textPart, /private\.invalid|frontend-autopilot-secret|session-secret|data:image|base64|secret\.js|Error: hidden|C:\\Users\\private|server\\share|polish-private-token|sk-polish/);
     assert.equal(imageParts.length, 2);
     assert.ok(imageParts.every((part) => /^data:image\/png;base64,/.test(part.image_url.url)));
     assert.equal(await fs.readFile(path.join(ctx.appDir, 'src', 'App.jsx'), 'utf8'), 'export default function App(){return draft}');
@@ -1689,7 +1689,7 @@ export const apiToken = 'sk-polish-private-token';`,
       'applying one bounded UI polish pass',
       '2 files applied to isolated candidate',
     ]);
-    assert.doesNotMatch(JSON.stringify(ctx.events), /private\.invalid|vibe-secret|session-secret|base64|src\/App/);
+    assert.doesNotMatch(JSON.stringify(ctx.events), /private\.invalid|frontend-autopilot-secret|session-secret|base64|src\/App/);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
@@ -1705,7 +1705,7 @@ test('single-pass polisher rejects invalid model output before candidate writes'
   ];
 
   for (const [name, content, code] of cases) {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-polish-invalid-'));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-polish-invalid-'));
     const ctx = await createRunContext(path.join(root, 'target'), {
       runsRoot: path.join(root, 'runs'),
     });
@@ -1735,7 +1735,7 @@ test('single-pass polisher rejects invalid model output before candidate writes'
 
 test('single-pass polisher propagates provider failure without success evidence', async () => {
   const { polish } = await loadPolisherModule();
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-polish-provider-fail-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-polish-provider-fail-'));
   const ctx = await createRunContext(path.join(root, 'target'), {
     runsRoot: path.join(root, 'runs'),
   });
@@ -1763,7 +1763,7 @@ test('single-pass polisher propagates provider failure without success evidence'
 
 test('single-pass polisher rejects screenshot paths outside owned evidence directories', async () => {
   const { polish } = await loadPolisherModule();
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-polish-evidence-jail-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-polish-evidence-jail-'));
   const ctx = await createRunContext(path.join(root, 'target'), {
     runsRoot: path.join(root, 'runs'),
   });
@@ -1796,7 +1796,7 @@ test('single-pass polisher rejects screenshot paths outside owned evidence direc
 
 test('single-pass polisher validates screenshot magic and uses the detected MIME type', async () => {
   const { polish } = await loadPolisherModule();
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-polish-image-magic-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-polish-image-magic-'));
   const ctx = await createRunContext(path.join(root, 'target'), {
     runsRoot: path.join(root, 'runs'),
   });
@@ -1836,7 +1836,7 @@ test('single-pass polisher rejects forged or extension-mismatched screenshots be
     ['forged.png', Buffer.from('not an image')],
     ['mismatch.png', Buffer.from([0xff, 0xd8, 0xff, 0xd9])],
   ]) {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-polish-forged-image-'));
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-polish-forged-image-'));
     const ctx = await createRunContext(path.join(root, 'target'), {
       runsRoot: path.join(root, 'runs'),
     });
@@ -1863,7 +1863,7 @@ test('single-pass polisher rejects forged or extension-mismatched screenshots be
 
 test('single-pass polisher rejects linked screenshot evidence before reading bytes', async () => {
   const { polish } = await loadPolisherModule();
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-polish-linked-image-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-polish-linked-image-'));
   const ctx = await createRunContext(path.join(root, 'target'), {
     runsRoot: path.join(root, 'runs'),
   });
@@ -1901,7 +1901,7 @@ test('single-pass polisher rejects linked screenshot evidence before reading byt
 
 test('single-pass polisher removes a partial candidate when a patch write fails', async () => {
   const { polish } = await loadPolisherModule();
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-polish-partial-write-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-polish-partial-write-'));
   const ctx = await createRunContext(path.join(root, 'target'), {
     runsRoot: path.join(root, 'runs'),
   });
@@ -1932,7 +1932,7 @@ test('single-pass polisher removes a partial candidate when a patch write fails'
 });
 
 test('run context exposes owned quality and polish paths without precreating the draft', async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-polish-context-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-polish-context-'));
   const ctx = await createRunContext(path.join(root, 'target'), {
     runsRoot: path.join(root, 'runs'),
   });
@@ -1947,7 +1947,7 @@ test('run context exposes owned quality and polish paths without precreating the
 });
 
 test('config fixes polish rounds to one and rejects external expansion', async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-polish-config-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-polish-config-'));
   const inputDir = path.join(root, 'input');
   await fs.mkdir(inputDir, { recursive: true });
   await fs.writeFile(path.join(inputDir, 'brief.md'), '# Demo');
@@ -1982,7 +1982,7 @@ test('config fixes polish rounds to one and rejects external expansion', async (
 });
 
 test('run context mirrors persisted events to an optional listener', async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-events-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-events-'));
   const seen = [];
   const ctx = await createRunContext(path.join(root, 'target'), {
     runsRoot: path.join(root, 'runs'),
@@ -1999,7 +1999,7 @@ test('run context mirrors persisted events to an optional listener', async () =>
 });
 
 test('run context copies reference evidence into the run directory', async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-run-reference-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-run-reference-'));
   const targetDir = path.join(root, 'target');
   const inputDir = path.join(targetDir, 'input');
   const referencesDir = path.join(inputDir, 'references');
@@ -2027,7 +2027,7 @@ test('run context copies reference evidence into the run directory', async () =>
 });
 
 test('loadConfig accepts an in-memory API key without persisting it', async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-config-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-config-'));
   await fs.mkdir(path.join(root, 'input'), { recursive: true });
   await fs.writeFile(path.join(root, 'input', 'brief.md'), '# Demo');
 
@@ -2075,7 +2075,7 @@ test('reference images validate magic bytes, dimensions, names, and limits', () 
 });
 
 test('reference images persist and loadConfig accepts screenshot-only input', async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-reference-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-reference-'));
   await fs.mkdir(path.join(root, 'input'), { recursive: true });
   const refs = normalizeReferencePayloads([{
     name: 'home.png',
@@ -2095,7 +2095,7 @@ test('reference images persist and loadConfig accepts screenshot-only input', as
 });
 
 test('reference discovery rejects manifest paths outside the references directory', async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-reference-jail-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-reference-jail-'));
   const inputDir = path.join(root, 'input');
   const referencesDir = path.join(inputDir, 'references');
   await fs.mkdir(referencesDir, { recursive: true });

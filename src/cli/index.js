@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Vibe-one CLI entry.
+// Frontend Autopilot CLI entry.
 // Usage:
 //   node src/cli/index.js run <target-dir>   Run the full pipeline on a target (dir containing input/)
 //   node src/cli/index.js plan <target-dir>  Planner only: generate SPEC/PLAN without building
@@ -10,16 +10,16 @@ import path from 'node:path';
 import process from 'node:process';
 
 function usage() {
-  console.log(`vibe-one - bounded AI delivery pipeline
+  console.log(`frontend-autopilot - bounded AI delivery pipeline
 
 Commands:
   run <target-dir>    Full pipeline: plan -> build -> verify -> repair -> report
   plan <target-dir>   Planner only (writes SPEC.generated.md / PLAN.generated.md)
 
 Environment:
-  VIBE_ONE_API_KEY    API key for the OpenAI-compatible endpoint (required)
-  VIBE_ONE_BASE_URL   Base URL, default https://api.openai.com/v1
-  VIBE_ONE_MODEL      Model id, default gpt-4o-mini (overridable in constraints.json)
+  FRONTEND_AUTOPILOT_API_KEY    API key for the OpenAI-compatible endpoint (required)
+  FRONTEND_AUTOPILOT_BASE_URL   Base URL, default https://api.openai.com/v1
+  FRONTEND_AUTOPILOT_MODEL      Model id, default gpt-4o-mini (overridable in constraints.json)
 `);
 }
 
@@ -39,6 +39,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error('[vibe-one] fatal:', err.message);
+  console.error('[frontend-autopilot] fatal:', err.message);
   process.exitCode = 1;
 });

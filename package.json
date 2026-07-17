@@ -1,5 +1,5 @@
 {
-  "name": "vibe-one",
+  "name": "frontend-autopilot",
   "version": "0.1.0",
   "description": "Bounded AI delivery pipeline: brief -> spec -> runnable app -> verification -> repair -> delivery report",
   "type": "module",
@@ -7,7 +7,7 @@
     "node": ">=20"
   },
   "bin": {
-    "vibe-one": "src/cli/index.js"
+    "frontend-autopilot": "src/cli/index.js"
   },
   "scripts": {
     "start": "node src/cli/index.js",

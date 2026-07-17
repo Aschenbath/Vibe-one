@@ -3,12 +3,12 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// Vibe-one project root (src/core/runContext.js -> ../../)
+// Frontend Autopilot project root (src/core/runContext.js -> ../../)
 export const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 export function resolveRunsRoot(config = {}) {
   return path.resolve(
-    config.runsRoot || process.env.VIBE_ONE_RUNS_DIR || path.join(PROJECT_ROOT, 'runs'),
+    config.runsRoot || process.env.FRONTEND_AUTOPILOT_RUNS_DIR || path.join(PROJECT_ROOT, 'runs'),
   );
 }
 

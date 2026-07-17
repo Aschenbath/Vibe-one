@@ -9,7 +9,7 @@ import { createConsoleServer } from '../src/console/server.js';
 import { PROJECT_ROOT } from '../src/core/runContext.js';
 import { writeReport } from '../src/reporter/deliveryReport.js';
 
-const ENABLED = process.env.VIBE_ONE_CONSOLE_E2E === '1';
+const ENABLED = process.env.FRONTEND_AUTOPILOT_CONSOLE_E2E === '1';
 const ONE_PIXEL_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nWQAAAAASUVORK5CYII=',
   'base64',
@@ -23,8 +23,8 @@ test('console package command is registered', async () => {
 });
 
 test('browser console keeps the Product Lab workspace responsive and accessible', { skip: !ENABLED, timeout: 60_000 }, async () => {
-  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-layout-')));
-  const artifacts = process.env.VIBE_ONE_CONSOLE_ARTIFACTS;
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-console-layout-')));
+  const artifacts = process.env.FRONTEND_AUTOPILOT_CONSOLE_ARTIFACTS;
   if (artifacts) await fs.mkdir(artifacts, { recursive: true });
   const app = createConsoleServer({ runsRoot: path.join(root, 'runs'), env: {} });
   const address = await app.listen(0);
@@ -105,7 +105,7 @@ test('browser console keeps the Product Lab workspace responsive and accessible'
 });
 
 test('browser Focus composes a Product Studio brief and ordered storyboard', { skip: !ENABLED, timeout: 60_000 }, async () => {
-  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-focus-')));
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-console-focus-')));
   const runsRoot = path.join(root, 'runs');
   let submittedBrief = '';
   let submittedReferences = [];
@@ -155,7 +155,7 @@ test('browser Focus composes a Product Studio brief and ordered storyboard', { s
 });
 
 test('browser Studio Flow keeps mobile drawers accessible and mutually exclusive', { skip: !ENABLED, timeout: 60_000 }, async () => {
-  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-flow-mobile-')));
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-console-flow-mobile-')));
   const runsRoot = path.join(root, 'runs');
   const pipeline = async ({ config }) => {
     const runDir = path.join(runsRoot, 'flow-mobile-run');
@@ -200,9 +200,9 @@ test('browser Studio Flow keeps mobile drawers accessible and mutually exclusive
 });
 
 test('browser console submits a reference image and renders live evidence', { skip: !ENABLED, timeout: 60_000 }, async () => {
-  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-browser-')));
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-console-browser-')));
   const runsRoot = path.join(root, 'runs');
-  const artifacts = process.env.VIBE_ONE_CONSOLE_ARTIFACTS || path.join(root, 'artifacts');
+  const artifacts = process.env.FRONTEND_AUTOPILOT_CONSOLE_ARTIFACTS || path.join(root, 'artifacts');
   await fs.mkdir(artifacts, { recursive: true });
 
   const previewServer = http.createServer((_req, res) => {
@@ -341,7 +341,7 @@ test('browser console submits a reference image and renders live evidence', { sk
 });
 
 test('browser reference input serializes pending work before submit and clear', { skip: !ENABLED, timeout: 60_000 }, async () => {
-  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-reference-race-')));
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-console-reference-race-')));
   const runsRoot = path.join(root, 'runs');
   let submittedReferences = [];
   const pipeline = async ({ config }) => {
@@ -410,7 +410,7 @@ test('browser reference input serializes pending work before submit and clear', 
 });
 
 test('browser reference input reports corrupt images and resets the picker', { skip: !ENABLED, timeout: 60_000 }, async () => {
-  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-reference-corrupt-')));
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-console-reference-corrupt-')));
   const app = createConsoleServer({ runsRoot: path.join(root, 'runs'), env: {} });
   const address = await app.listen(0);
   const browser = await chromium.launch();
@@ -438,12 +438,12 @@ test('browser reference input reports corrupt images and resets the picker', { s
 });
 
 test('browser console reconstructs persisted reference and visual evidence', { skip: !ENABLED, timeout: 60_000 }, async () => {
-  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-visual-evidence-')));
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-console-visual-evidence-')));
   const runsRoot = path.join(root, 'runs');
   const runId = 'visual-history-run';
   const runDir = path.join(runsRoot, runId);
   const privateEndpoint = 'https://private.invalid/v1';
-  const privatePath = 'D:\\private\\vibe-secret\\artifact.txt';
+  const privatePath = 'D:\\private\\frontend-autopilot-secret\\artifact.txt';
   await fs.mkdir(path.join(runDir, 'logs'), { recursive: true });
   await fs.mkdir(path.join(runDir, 'references'), { recursive: true });
   await fs.mkdir(path.join(runDir, 'screenshots'), { recursive: true });
@@ -528,7 +528,7 @@ test('browser console reconstructs persisted reference and visual evidence', { s
     assert.match(await visual.locator('img').nth(3).getAttribute('src'), /\/screenshots\/home-round-0\.png$/);
     await page.locator('[data-tab="report"]').click();
     await page.locator('#report-content').filter({ hasText: 'Delivery Report' }).waitFor();
-    assert.doesNotMatch(await page.locator('body').innerText(), /private\.invalid|vibe-secret/);
+    assert.doesNotMatch(await page.locator('body').innerText(), /private\.invalid|frontend-autopilot-secret/);
     await page.locator('[data-tab="visual"]').click();
   }
 
@@ -578,7 +578,7 @@ test('browser console reconstructs persisted reference and visual evidence', { s
 });
 
 test('browser console does not expose unknown server copy', { skip: !ENABLED, timeout: 60_000 }, async () => {
-  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-copy-safety-')));
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-console-copy-safety-')));
   const runsRoot = path.join(root, 'runs');
   const runId = 'unknown-copy-run';
   const runDir = path.join(runsRoot, runId);

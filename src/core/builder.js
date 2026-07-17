@@ -183,7 +183,7 @@ function finishBlock(block) {
 // Fixed, trusted scaffold: manifest with whitelisted deps + vite config.
 async function writeScaffold(ctx) {
   const manifest = {
-    name: 'vibe-one-generated-app',
+    name: 'frontend-autopilot-generated-app',
     private: true,
     version: '0.0.0',
     type: 'module',

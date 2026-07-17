@@ -32,7 +32,7 @@ async function waitForTerminalJob(baseUrl, id) {
 }
 
 test('session status exposes key presence but never the key', () => {
-  const manager = createJobManager({ runsRoot: path.join(os.tmpdir(), 'vibe-console-status'), pipeline: async () => {} });
+  const manager = createJobManager({ runsRoot: path.join(os.tmpdir(), 'frontend-autopilot-console-status'), pipeline: async () => {} });
   manager.setSessionConfig({ apiKey: 'top-secret', baseUrl: 'https://example.test/v1', model: 'demo' });
 
   const status = manager.getStatus();
@@ -85,7 +85,7 @@ test('studio state reducer keeps workspace transitions pure and replays events o
 });
 
 test('a job streams stages and rejects concurrent starts', async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-job-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-console-job-'));
   let release;
   let pipelineTargetDir;
   const gate = new Promise((resolve) => {
@@ -120,11 +120,11 @@ test('a job streams stages and rejects concurrent starts', async () => {
 });
 
 test('a screenshot-only job persists references without exposing base64, paths, or secrets', async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-reference-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-console-reference-'));
   let loaded;
   const manager = createJobManager({
     runsRoot: root,
-    env: { VIBE_ONE_API_KEY: 'secret-key' },
+    env: { FRONTEND_AUTOPILOT_API_KEY: 'secret-key' },
     load: async (targetDir, overrides) => {
       loaded = await loadConfig(targetDir, overrides);
       return { ...loaded, model: 'stub', baseUrl: 'local' };
@@ -157,7 +157,7 @@ test('a screenshot-only job persists references without exposing base64, paths, 
     assert.equal(publicJob.referenceCount, 1);
     assert.deepEqual(publicJob.references, ['home.png']);
     assert.equal(publicJob.inputMode, 'images');
-    assert.doesNotMatch(serialized, /secret-key|iVBOR|vibe-console-reference-/);
+    assert.doesNotMatch(serialized, /secret-key|iVBOR|frontend-autopilot-console-reference-/);
     assert.equal(loaded.references.length, 1);
     assert.equal(loaded.references[0].name, 'home.png');
   } finally {
@@ -166,9 +166,9 @@ test('a screenshot-only job persists references without exposing base64, paths, 
 });
 
 test('public jobs and fatal events do not expose endpoints or absolute paths', async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-public-secrecy-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-console-public-secrecy-'));
   const privateEndpoint = 'https://private.invalid/v1';
-  const privatePath = 'D:\\private\\vibe-secret\\artifact.txt';
+  const privatePath = 'D:\\private\\frontend-autopilot-secret\\artifact.txt';
   const manager = createJobManager({
     runsRoot: path.join(root, 'runs'),
     env: {},
@@ -189,14 +189,14 @@ test('public jobs and fatal events do not expose endpoints or absolute paths', a
     const serialized = JSON.stringify(job);
 
     assert.equal(Object.hasOwn(job, 'baseUrl'), false);
-    assert.doesNotMatch(serialized, /private\.invalid|vibe-secret|public-secrecy-key/);
+    assert.doesNotMatch(serialized, /private\.invalid|frontend-autopilot-secret|public-secrecy-key/);
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
 });
 
 test('visual comparison events expose a visual stage and sanitized error code', async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-visual-stage-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-console-visual-stage-'));
   let release;
   let markVisual;
   const visualReady = new Promise((resolve) => {
@@ -207,7 +207,7 @@ test('visual comparison events expose a visual stage and sanitized error code', 
   });
   const manager = createJobManager({
     runsRoot: root,
-    env: { VIBE_ONE_API_KEY: 'visual-stage-secret' },
+    env: { FRONTEND_AUTOPILOT_API_KEY: 'visual-stage-secret' },
     pipeline: async ({ config }) => {
       config.onEvent({
         type: 'visual:compare',
@@ -237,7 +237,7 @@ test('visual comparison events expose a visual stage and sanitized error code', 
 });
 
 test('run store reconstructs evidence and rejects traversal', async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-run-store-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-run-store-'));
   const runDir = path.join(root, 'demo-2026-07-10T12-00-00');
   await fs.mkdir(path.join(runDir, 'logs'), { recursive: true });
   await fs.mkdir(path.join(runDir, 'screenshots'), { recursive: true });
@@ -306,7 +306,7 @@ test('run store reconstructs evidence and rejects traversal', async () => {
 });
 
 test('HTTP API serves jailed reference images and visual comparison history', async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-artifacts-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-console-artifacts-'));
   const runsRoot = path.join(root, 'runs');
   const runId = 'visual-run-2026-07-10T12-00-00';
   const runDir = path.join(runsRoot, runId);
@@ -347,7 +347,7 @@ test('HTTP API serves jailed reference images and visual comparison history', as
 
     const jobResponse = await fetch(`${address.url}api/jobs/${encodeURIComponent(runId)}`);
     const jobText = await jobResponse.text();
-    assert.doesNotMatch(jobText, /vibe-console-artifacts-|AppData|\\Temp\\/i);
+    assert.doesNotMatch(jobText, /frontend-autopilot-console-artifacts-|AppData|\\Temp\\/i);
   } finally {
     await app.close();
     await fs.rm(root, { recursive: true, force: true });
@@ -355,13 +355,13 @@ test('HTTP API serves jailed reference images and visual comparison history', as
 });
 
 test('run store reads safe product evidence with legacy fallbacks and jailed images', async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-quality-store-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-console-quality-store-'));
   const runId = 'quality-run-2026-07-13T10-00-00';
   const legacyId = 'legacy-run-2026-07-13T09-00-00';
   const corruptId = 'corrupt-run-2026-07-13T08-00-00';
   const linkedRunId = 'linked-run-2026-07-13T07-00-00';
   const runDir = path.join(root, runId);
-  const privatePath = 'D:/private/vibe-secret/artifact.png';
+  const privatePath = 'D:/private/frontend-autopilot-secret/artifact.png';
   const privateCredential = 'sk-store-private-1234567890';
   await Promise.all([
     fs.mkdir(path.join(runDir, 'quality'), { recursive: true }),
@@ -445,7 +445,7 @@ test('run store reads safe product evidence with legacy fallbacks and jailed ima
     assert.deepEqual(polish.draft.evidence, [{ file: 'draft.png', url: `/api/jobs/${runId}/screenshots/draft.png` }]);
     assert.deepEqual(polish.candidate.evidence, [{ file: 'candidate.png', url: `/api/jobs/${runId}/artifacts/polish-screenshots/candidate.png` }]);
     assert.deepEqual(legacy.map((item) => item.available), [false, false, false]);
-    assert.doesNotMatch(JSON.stringify({ design, quality, polish }), /vibe-secret|actualFile|secret|sk-store-private|Bearer\s+sk-store-private|secret\.js|\n\s*at\s|workspace\/secrets|server\/share\/key/i);
+    assert.doesNotMatch(JSON.stringify({ design, quality, polish }), /frontend-autopilot-secret|actualFile|secret|sk-store-private|Bearer\s+sk-store-private|secret\.js|\n\s*at\s|workspace\/secrets|server\/share\/key/i);
 
     for (const [bucket, name, type] of [
       ['quality', 'quality.png', 'image/png'],
@@ -478,7 +478,7 @@ test('run store reads safe product evidence with legacy fallbacks and jailed ima
 });
 
 test('HTTP API exposes safe design quality polish and evidence routes', async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-quality-api-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-console-quality-api-'));
   const runId = 'quality-api-run-2026-07-13T11-00-00';
   const legacyId = 'quality-api-legacy-2026-07-13T10-00-00';
   const corruptId = 'quality-api-corrupt-2026-07-13T09-00-00';
@@ -529,7 +529,7 @@ test('HTTP API exposes safe design quality polish and evidence routes', async ()
       assert.equal(response.status, 200);
       assert.match(response.headers.get('content-type'), /application\/json/);
       assert.equal(JSON.parse(text).available, true);
-      assert.doesNotMatch(text, /private\.invalid|privateEndpoint|AppData|vibe-secret/i);
+      assert.doesNotMatch(text, /private\.invalid|privateEndpoint|AppData|frontend-autopilot-secret/i);
       assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
     }
     const legacy = await fetch(`${address.url}api/jobs/${legacyId}/quality`);
@@ -559,7 +559,7 @@ test('HTTP API exposes safe design quality polish and evidence routes', async ()
     assert.deepEqual(JSON.parse(corruptText), {
       error: { code: 'EVIDENCE_JSON_INVALID', message: 'Evidence data is invalid.' },
     });
-    assert.doesNotMatch(corruptText, /broken private|quality-api-corrupt|AppData|vibe-secret/i);
+    assert.doesNotMatch(corruptText, /broken private|quality-api-corrupt|AppData|frontend-autopilot-secret/i);
   } finally {
     await app.close();
     await fs.rm(root, { recursive: true, force: true });
@@ -567,7 +567,7 @@ test('HTTP API exposes safe design quality polish and evidence routes', async ()
 });
 
 test('writeReport and HTTP evidence redact labeled secrets and raw raster base64 without hiding ordinary text', async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-report-sanitize-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-console-report-sanitize-'));
   const runId = 'sanitize-report-run-2026-07-13T13-55-00';
   const runDir = path.join(root, runId);
   const rawPngBase64 = ONE_PIXEL_PNG.toString('base64');
@@ -629,7 +629,7 @@ test('writeReport and HTTP evidence redact labeled secrets and raw raster base64
 });
 
 test('RunStore does not expose a partially published new evidence bundle', async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-report-partial-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-console-report-partial-'));
   const runId = 'partial-report-run-2026-07-13T13-56-00';
   const runDir = path.join(root, runId);
   await fs.mkdir(runDir, { recursive: true });
@@ -667,7 +667,7 @@ test('RunStore does not expose a partially published new evidence bundle', async
 });
 
 test('secure evidence read rejects an lstat-to-open file swap without leaking raced content', async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-evidence-race-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-console-evidence-race-'));
   const runId = 'evidence-race-run-2026-07-13T14-10-00';
   const runDir = path.join(root, runId);
   const target = path.join(runDir, 'design.json');
@@ -709,7 +709,7 @@ test('secure evidence read rejects an lstat-to-open file swap without leaking ra
 });
 
 test('secure evidence read accepts a zero path device id when the inode still matches', async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-zero-device-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-console-zero-device-'));
   const runId = 'zero-device-run-2026-07-14T16-00-00';
   const runDir = path.join(root, runId);
   const target = path.join(runDir, 'design.json');
@@ -740,7 +740,7 @@ test('secure evidence read accepts a zero path device id when the inode still ma
 });
 
 test('committed evidence reads an immutable bundle when the root mirror changes after marker read', async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-bundle-race-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-console-bundle-race-'));
   const runId = 'bundle-race-run-2026-07-13T14-30-00';
   const runDir = path.join(root, runId);
   const ctx = {
@@ -792,7 +792,7 @@ test('committed evidence reads an immutable bundle when the root mirror changes 
 });
 
 test('HTTP evidence URLs keep every referenced raster in the committed bundle', async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-raster-bundle-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-console-raster-bundle-'));
   const runId = 'raster-bundle-run-2026-07-13T14-45-00';
   const runDir = path.join(root, runId);
   const files = [
@@ -881,7 +881,7 @@ test('HTTP evidence URLs keep every referenced raster in the committed bundle', 
 });
 
 test('failed republish keeps the previous committed evidence bundle readable', async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-bundle-republish-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-console-bundle-republish-'));
   const runId = 'bundle-republish-run-2026-07-13T14-31-00';
   const runDir = path.join(root, runId);
   const ctx = {
@@ -924,7 +924,7 @@ test('failed republish keeps the previous committed evidence bundle readable', a
 });
 
 test('secure evidence read rejects a hard-link swap that remains through the second fstat', async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-evidence-hardlink-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-console-evidence-hardlink-'));
   const runId = 'evidence-hardlink-run-2026-07-13T14-32-00';
   const runDir = path.join(root, runId);
   const target = path.join(runDir, 'design.json');
@@ -983,7 +983,7 @@ test('preview manager reuses one preview and stops it on replacement', async () 
 });
 
 test('HTTP API configures a session and starts a job without exposing the key', async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-http-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-console-http-'));
   const pipeline = async ({ config }) => {
     config.onEvent({ ts: new Date().toISOString(), type: 'plan:start', summary: 'planning' });
     return { runId: 'run-1', runDir: path.join(root, 'runs', 'run-1'), status: 'planned' };
@@ -1015,7 +1015,7 @@ test('HTTP API configures a session and starts a job without exposing the key', 
 });
 
 test('HTTP job creation accepts screenshot-only payloads above the default JSON limit safely', async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-http-reference-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-console-http-reference-'));
   const pipeline = async ({ config }) => ({
     runId: 'run-reference',
     runDir: path.join(root, 'runs', 'run-reference'),
@@ -1054,7 +1054,7 @@ test('HTTP job creation accepts screenshot-only payloads above the default JSON 
     assert.deepEqual(job.references, ['home.png']);
     assert.equal(job.referenceCount, 1);
     assert.equal(job.inputMode, 'images');
-    assert.doesNotMatch(body, /http-reference-secret|iVBOR|vibe-console-http-reference-/);
+    assert.doesNotMatch(body, /http-reference-secret|iVBOR|frontend-autopilot-console-http-reference-/);
     await waitForTerminalJob(address.url, job.id);
   } finally {
     await app.close();
@@ -1063,7 +1063,7 @@ test('HTTP job creation accepts screenshot-only payloads above the default JSON 
 });
 
 test('HTTP API returns structured validation errors', async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-http-errors-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-http-errors-'));
   const app = createConsoleServer({ runsRoot: path.join(root, 'runs'), env: {} });
   const address = await app.listen(0);
 
@@ -1083,7 +1083,7 @@ test('HTTP API returns structured validation errors', async () => {
 });
 
 test('HTTP responses include local-console browser security headers', async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-http-headers-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-http-headers-'));
   const app = createConsoleServer({ runsRoot: path.join(root, 'runs'), env: {} });
   const address = await app.listen(0);
 
@@ -1099,7 +1099,7 @@ test('HTTP responses include local-console browser security headers', async () =
 });
 
 test('console serves the Studio state module as same-origin JavaScript', async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-studio-state-module-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-studio-state-module-'));
   const app = createConsoleServer({ runsRoot: path.join(root, 'runs'), env: {} });
   const address = await app.listen(0);
 
@@ -1122,7 +1122,7 @@ test('console serves the Studio state module as same-origin JavaScript', async (
 });
 
 test('console page exposes the complete operational workflow', async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-ui-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-console-ui-'));
   const app = createConsoleServer({ runsRoot: path.join(root, 'runs'), env: {} });
   const address = await app.listen(0);
 
@@ -1198,7 +1198,7 @@ test('console page exposes the complete operational workflow', async () => {
 });
 
 test('console serves the Product Studio renderer module', async () => {
-  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-console-renderers-')));
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-console-renderers-')));
   const app = createConsoleServer({ runsRoot: path.join(root, 'runs'), env: {} });
   const address = await app.listen(0);
   try {

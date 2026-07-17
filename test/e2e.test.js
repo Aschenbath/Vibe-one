@@ -9,7 +9,7 @@
 //
 // Opt-in (needs npm registry + installed Playwright chromium), so default
 // `npm test` stays offline and instant:
-//   VIBE_ONE_E2E=1 node --test test/e2e.test.js
+//   FRONTEND_AUTOPILOT_E2E=1 node --test test/e2e.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -18,7 +18,7 @@ import path from 'node:path';
 import { loadConfig } from '../src/core/config.js';
 import { runPipeline } from '../src/core/pipeline.js';
 
-const ENABLED = process.env.VIBE_ONE_E2E === '1';
+const ENABLED = process.env.FRONTEND_AUTOPILOT_E2E === '1';
 
 const E2E_PRODUCT_DESIGN = {
   productType: 'Operational workflow web application',
@@ -559,7 +559,7 @@ ${uiRepairCss(44)}
 
 test('green draft is polished, fully reverified, and promoted before delivery', { skip: !ENABLED, timeout: 300_000 }, async () => {
   const tmpRoot = await fs.realpath(
-    await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-one-polish-success-')),
+    await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-polish-success-')),
   );
   const targetDir = path.join(tmpRoot, 'target');
   const brief = '# Expenses\nList expenses with a total and an Add button.\n';
@@ -640,7 +640,7 @@ test('green draft is polished, fully reverified, and promoted before delivery', 
 
 test('failed polish verification keeps the working draft and returns POLISH_FAILED', { skip: !ENABLED, timeout: 300_000 }, async () => {
   const tmpRoot = await fs.realpath(
-    await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-one-polish-failed-')),
+    await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-polish-failed-')),
   );
   const targetDir = path.join(tmpRoot, 'target');
   const brief = '# Expenses\nList expenses with a total and an Add button.\n';
@@ -715,7 +715,7 @@ test('failed polish verification keeps the working draft and returns POLISH_FAIL
 
 test('failed polish promotion exposes safe rollback recovery evidence', { skip: !ENABLED, timeout: 300_000 }, async () => {
   const tmpRoot = await fs.realpath(
-    await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-one-polish-rollback-failed-')),
+    await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-polish-rollback-failed-')),
   );
   const targetDir = path.join(tmpRoot, 'target');
   const brief = '# Expenses\nList expenses with a total and an Add button.\n';
@@ -799,7 +799,7 @@ test('failed polish promotion exposes safe rollback recovery evidence', { skip: 
 
 test('plan-only pipeline never builds or polishes', { skip: !ENABLED, timeout: 30_000 }, async () => {
   const tmpRoot = await fs.realpath(
-    await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-one-polish-plan-only-')),
+    await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-polish-plan-only-')),
   );
   const targetDir = path.join(tmpRoot, 'target');
   const brief = '# Expenses\nPlan an expense tracker.\n';
@@ -850,7 +850,7 @@ test('plan-only pipeline never builds or polishes', { skip: !ENABLED, timeout: 3
 test('full pipeline succeeds end-to-end with a stub model (no API)', { skip: !ENABLED, timeout: 300_000 }, async () => {
   // Canonicalize Windows 8.3 temp aliases (for example ASCHEN~1). Vite/Rollup
   // otherwise sees the long and short spellings as different roots.
-  const tmpRoot = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-one-e2e-')));
+  const tmpRoot = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-e2e-')));
   const targetDir = path.join(tmpRoot, 'target');
   await fs.mkdir(path.join(targetDir, 'input'), { recursive: true });
   await fs.writeFile(path.join(targetDir, 'input', 'brief.md'), '# Expenses\nList expenses with a total and an Add button.\n');
@@ -888,7 +888,7 @@ test('full pipeline succeeds end-to-end with a stub model (no API)', { skip: !EN
 
 test('repair loop fixes a broken notes app and reaches success', { skip: !ENABLED, timeout: 300_000 }, async () => {
   const provider = createRepairingNotesProvider();
-  const tmpRoot = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-one-repair-e2e-')));
+  const tmpRoot = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-repair-e2e-')));
   const targetDir = path.join(tmpRoot, 'notes-mobile');
   const brief = '# Notes\nList notes and let the user add a new note.\n';
   await fs.mkdir(path.join(targetDir, 'input'), { recursive: true });
@@ -921,7 +921,7 @@ test('repair loop fixes a broken notes app and reaches success', { skip: !ENABLE
 
 test('UI quality failure sends screenshots to the fixer and passes after one repair', { skip: !ENABLED, timeout: 300_000 }, async () => {
   const tmpRoot = await fs.realpath(
-    await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-one-ui-quality-repair-')),
+    await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-ui-quality-repair-')),
   );
   const targetDir = path.join(tmpRoot, 'ui-quality-repair');
   const brief = '# Quality overview\nKeep the Add record action usable.\n';
@@ -955,7 +955,7 @@ test('UI quality failure sends screenshots to the fixer and passes after one rep
     assert.equal(provider.observed.imageCount, 2);
     assert.doesNotMatch(
       provider.observed.promptText,
-      /private\.invalid|data:image|vibe-one-ui-quality-repair-/,
+      /private\.invalid|data:image|frontend-autopilot-ui-quality-repair-/,
     );
     assert.equal(result.errorCode, undefined);
     assert.equal(result.uiQuality.summary.pass, true);
@@ -1017,7 +1017,7 @@ test('UI quality failure sends screenshots to the fixer and passes after one rep
     const publicEvidence = eventsText + '\n' + report;
     assert.doesNotMatch(
       publicEvidence,
-      /private\.invalid|data:image|base64|vibe-one-ui-quality-repair-|[A-Z]:\\/i,
+      /private\.invalid|data:image|base64|frontend-autopilot-ui-quality-repair-|[A-Z]:\\/i,
     );
   } finally {
     await fs.rm(tmpRoot, { recursive: true, force: true });
@@ -1026,7 +1026,7 @@ test('UI quality failure sends screenshots to the fixer and passes after one rep
 
 test('exhausted UI quality review returns the stable failure code', { skip: !ENABLED, timeout: 300_000 }, async () => {
   const tmpRoot = await fs.realpath(
-    await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-one-ui-quality-failed-')),
+    await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-ui-quality-failed-')),
   );
   const targetDir = path.join(tmpRoot, 'ui-quality-failed');
   const brief = '# Quality overview\nKeep the Add record action usable.\n';
@@ -1063,7 +1063,7 @@ test('exhausted UI quality review returns the stable failure code', { skip: !ENA
 
 test('coded UI collector infrastructure errors stay fatal and skip repair', { skip: !ENABLED, timeout: 300_000 }, async () => {
   const tmpRoot = await fs.realpath(
-    await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-one-ui-collector-fatal-')),
+    await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-ui-collector-fatal-')),
   );
   const targetDir = path.join(tmpRoot, 'ui-collector-fatal');
   const brief = '# Expenses\nList expenses with a total and an Add button.\n';
@@ -1117,7 +1117,7 @@ test('coded UI collector infrastructure errors stay fatal and skip repair', { sk
 });
 
 test('visual reference passes on round zero with deterministic local scoring', { skip: !ENABLED, timeout: 300_000 }, async () => {
-  const tmpRoot = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-one-visual-pass-')));
+  const tmpRoot = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-visual-pass-')));
   const targetDir = path.join(tmpRoot, 'visual-pass');
   await fs.mkdir(path.join(targetDir, 'input'), { recursive: true });
   await fs.writeFile(path.join(targetDir, 'input', 'brief.md'), '# 支出看板\n根据参考图生成响应式页面。\n');
@@ -1150,7 +1150,7 @@ test('visual reference passes on round zero with deterministic local scoring', {
 });
 
 test('visual failure sends both images to the fixer and passes after one repair', { skip: !ENABLED, timeout: 300_000 }, async () => {
-  const tmpRoot = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-one-visual-repair-')));
+  const tmpRoot = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-visual-repair-')));
   const targetDir = path.join(tmpRoot, 'visual-repair');
   await fs.mkdir(path.join(targetDir, 'input'), { recursive: true });
   await fs.writeFile(path.join(targetDir, 'input', 'brief.md'), '# 支出看板\n先生成后按参考图修复视觉。\n');
@@ -1197,5 +1197,5 @@ test('visual failure sends both images to the fixer and passes after one repair'
 test('e2e test is opt-in', () => {
   // Always-on marker so `npm test` shows the e2e suite exists but is gated.
   assert.ok(true);
-  if (!ENABLED) console.log('  (e2e skipped; set VIBE_ONE_E2E=1 to run the full no-API integration test)');
+  if (!ENABLED) console.log('  (e2e skipped; set FRONTEND_AUTOPILOT_E2E=1 to run the full no-API integration test)');
 });

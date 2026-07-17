@@ -27,9 +27,9 @@ export function createJobManager({ runsRoot, pipeline = runPipeline, load = load
   function getStatus() {
     return {
       ready: true,
-      hasApiKey: Boolean(session.apiKey || env.VIBE_ONE_API_KEY),
-      baseUrl: session.baseUrl || env.VIBE_ONE_BASE_URL || 'https://api.openai.com/v1',
-      model: session.model || env.VIBE_ONE_MODEL || 'gpt-4o-mini',
+      hasApiKey: Boolean(session.apiKey || env.FRONTEND_AUTOPILOT_API_KEY),
+      baseUrl: session.baseUrl || env.FRONTEND_AUTOPILOT_BASE_URL || 'https://api.openai.com/v1',
+      model: session.model || env.FRONTEND_AUTOPILOT_MODEL || 'gpt-4o-mini',
       activeJobId,
     };
   }
@@ -58,14 +58,14 @@ export function createJobManager({ runsRoot, pipeline = runPipeline, load = load
     const mode = input.mode === 'plan' ? 'plan' : input.mode === 'run' ? 'run' : null;
     if (!mode) throw new ConsoleError('MODE_INVALID', 'Mode must be run or plan.', 422);
 
-    const apiKey = session.apiKey || env.VIBE_ONE_API_KEY;
+    const apiKey = session.apiKey || env.FRONTEND_AUTOPILOT_API_KEY;
     if (!apiKey) throw new ConsoleError('API_KEY_REQUIRED', 'Enter an API key for this session.', 422);
 
     const id = randomUUID();
     const title = String(input.title ?? 'Untitled app').trim().slice(0, 80) || 'Untitled app';
     const targetDir = path.join(runsRoot, '.console-inputs', `${slugTitle(title)}-${id.slice(0, 8)}`);
-    const baseUrl = String(input.baseUrl || session.baseUrl || env.VIBE_ONE_BASE_URL || 'https://api.openai.com/v1');
-    const model = String(input.model || session.model || env.VIBE_ONE_MODEL || 'gpt-4o-mini');
+    const baseUrl = String(input.baseUrl || session.baseUrl || env.FRONTEND_AUTOPILOT_BASE_URL || 'https://api.openai.com/v1');
+    const model = String(input.model || session.model || env.FRONTEND_AUTOPILOT_MODEL || 'gpt-4o-mini');
 
     await fs.mkdir(path.join(targetDir, 'input'), { recursive: true });
     if (brief) {

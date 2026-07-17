@@ -1,12 +1,12 @@
-# Vibe-one 产品范围
+# Frontend Autopilot 产品范围
 
-这份文档只说明 Vibe-one 做什么、不做什么。想快速了解项目，请先看 [README](README.md)；想看真实结果，请看 [SignalDesk 案例](docs/signaldesk-case-study.md)。
+这份文档只说明 Frontend Autopilot 做什么、不做什么。想快速了解项目，请先看 [README](README.md)；想看真实结果，请看 [SignalDesk 案例](docs/signaldesk-case-study.md)。
 
 ## 它要解决的问题
 
 大模型生成一份 React 代码很快，但代码“看起来完整”不代表它能构建、能操作、能适配手机，更不代表自动修复后没有破坏原本正常的功能。
 
-Vibe-one 把生成过程收进一条小而严格的本地流水线：
+Frontend Autopilot 把生成过程收进一条小而严格的本地流水线：
 
 ```text
 需求 -> 生成 -> 构建 -> 浏览器验收 -> 限次修复 -> 完整复验 -> 报告
@@ -71,4 +71,4 @@ SignalDesk 已经证明纯文字需求路径可以通过这套流程。Atlas 则
 
 ## English summary
 
-Vibe-one is deliberately narrow: it generates small mock-data React applications and decides delivery through local build, browser, UI, and optional visual evidence. It does not attempt to be a general coding agent or a production backend generator. Every repair is bounded, and every modified candidate must pass the full verification suite again.
+Frontend Autopilot is deliberately narrow: it generates small mock-data React applications and decides delivery through local build, browser, UI, and optional visual evidence. It does not attempt to be a general coding agent or a production backend generator. Every repair is bounded, and every modified candidate must pass the full verification suite again.

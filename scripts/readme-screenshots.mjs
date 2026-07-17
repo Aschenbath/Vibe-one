@@ -10,8 +10,8 @@ const result = spawnSync(
     cwd: projectRoot,
     env: {
       ...process.env,
-      VIBE_ONE_CONSOLE_E2E: '1',
-      VIBE_ONE_CONSOLE_ARTIFACTS: path.join(projectRoot, 'docs', 'screenshots'),
+      FRONTEND_AUTOPILOT_CONSOLE_E2E: '1',
+      FRONTEND_AUTOPILOT_CONSOLE_ARTIFACTS: path.join(projectRoot, 'docs', 'screenshots'),
     },
     stdio: 'inherit',
     windowsHide: true,

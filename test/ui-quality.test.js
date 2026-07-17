@@ -234,7 +234,7 @@ test('summary reports missing viewport evidence per page', () => {
 });
 
 test('collector captures ordered desktop-mobile evidence and closes browser resources', async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-ui-quality-collector-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-ui-quality-collector-'));
   const server = http.createServer((request, response) => {
     const small = request.url?.startsWith('/small');
     const buttonSize = small ? 32 : 44;
@@ -354,7 +354,7 @@ test('collector captures ordered desktop-mobile evidence and closes browser reso
 });
 
 test('collector audits only visible text and reports a hidden-only main as empty', async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-ui-visible-text-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-ui-visible-text-'));
   const server = http.createServer((request, response) => {
     const hiddenOnly = request.url?.startsWith('/hidden-only');
     const main = hiddenOnly
@@ -416,7 +416,7 @@ test('collector audits only visible text and reports a hidden-only main as empty
 });
 
 test('collector rejects protocol-relative routes before escape navigation', async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'vibe-ui-route-safety-'));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'frontend-autopilot-ui-route-safety-'));
   let escapeRequests = 0;
   const baseServer = http.createServer((_request, response) => {
     response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });

@@ -49,7 +49,7 @@ export async function runCommand(ctx, name, cmd, args, opts = {}) {
 
     const timer = setTimeout(() => {
       killTree(child);
-      resolve({ exitCode: null, stdout, stderr: stderr + '\n[vibe-one] timed out', timedOut: true });
+      resolve({ exitCode: null, stdout, stderr: stderr + '\n[frontend-autopilot] timed out', timedOut: true });
     }, opts.timeoutMs ?? 5 * 60 * 1000);
 
     child.on('error', (err) => {
